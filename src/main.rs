@@ -136,13 +136,18 @@ impl EventHandler for Handler {
                             SoundType::Youtube => match songbird::ytdl(&user.sound).await {
                                 Ok(source) => source,
                                 Err(err) => {
-                                    error!("Error starting source: {err:?}");
+                                    error!("Error starting youtube source: {err:?}");
                                     return;
                                 }
                             },
                             SoundType::File => {
-                                error!("Playing files not supported yet");
-                                return;
+                                match songbird::ffmpeg(format!("sounds/{}", &user.sound)).await {
+                                    Ok(source) => source,
+                                    Err(err) => {
+                                        error!("Error starting file source: {err:?}");
+                                        return;
+                                    }
+                                }
                             }
                         };
 
