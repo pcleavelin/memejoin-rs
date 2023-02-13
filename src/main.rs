@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use serenity::async_trait;
-use serenity::model::prelude::{Channel, GuildId, Message, Ready};
+use serenity::model::prelude::{Channel, GuildId, Ready};
 use serenity::model::voice::VoiceState;
 use serenity::prelude::GatewayIntents;
 use serenity::prelude::*;
@@ -47,7 +47,7 @@ impl songbird::EventHandler for TrackEventHandler {
 #[derive(Debug, Clone, Deserialize)]
 struct Settings {
     #[serde(alias = "userEnteredSoundDelay")]
-    sound_delay: u64,
+    _sound_delay: u64,
     channels: HashMap<String, ChannelSettings>,
 }
 
@@ -69,7 +69,7 @@ struct UserSettings {
     #[serde(alias = "enterSound")]
     sound: String,
     #[serde(alias = "youtubeVolume")]
-    volume: i32,
+    _volume: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

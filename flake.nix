@@ -31,6 +31,16 @@
             youtube-dl
           ];
         };
+
+        packages = with pkgs; flake-utils.lib.flattenTree rec {
+          default = rustPlatform.buildRustPackage rec {
+            name = "memejoin-rs";
+            version = "0.1.0-alpha";
+            src = self;
+            cargoSha256 = "dGc6db0A7Tp+ZnsPAPCUbmmbNq/N/1DhKOb2gRPisN0=";
+            nativeBuildInputs = [ local-rust cmake gcc libopus ];
+          };
+        };
       }
     );
 }
