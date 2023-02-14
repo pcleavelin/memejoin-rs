@@ -40,6 +40,24 @@
             cargoSha256 = "dGc6db0A7Tp+ZnsPAPCUbmmbNq/N/1DhKOb2gRPisN0=";
             nativeBuildInputs = [ local-rust cmake gcc libopus ];
           };
+
+          docker = dockerTools.buildImage {
+            name = "memejoin-rs";
+            tag = "0.1.0.alpha";
+            copyToRoot = buildEnv {
+              name = "image-root";
+              paths = [ default ffmpeg libopus youtube-dl ];
+            };
+            runAsRoot = ''
+              #!${runtimeShell}
+              mkdir -p /data
+            '';
+            config = {
+              WorkingDir = "/data";
+              Volumes = { "/data/config" = { }; "/data/sounds" = { }; };
+              Entrypoint = [ "/bin/memejoin-rs" ];
+            };
+          };
         };
       }
     );
