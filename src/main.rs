@@ -28,18 +28,21 @@ impl songbird::EventHandler for TrackEventHandler {
         &'a self,
         ctx: &'b songbird::EventContext<'c>,
     ) -> Option<songbird::Event> {
-        if let songbird::EventContext::Track(track) = ctx {
-            if let Some(context) = track.get(0) {
-                if context.0.playing == songbird::tracks::PlayMode::End
-                    || context.0.playing == songbird::tracks::PlayMode::Stop
-                {
-                    let manager = songbird::get(&self.ctx).await.expect("should get manager");
-                    if let Err(err) = manager.leave(self.guild_id).await {
-                        error!("Failed to leave voice channel: {err:?}");
-                    }
+        if let songbird::EventContext::Track(tracks) = ctx {
+            for (track_state, _track_handle) in tracks.iter() {
+                // If any track is still playing, don't leave the channel yet
+                // there are more sounds to be played (I think)
+                if track_state.playing == songbird::tracks::PlayMode::Play {
+                    return None;
                 }
             }
         }
+
+        let manager = songbird::get(&self.ctx).await.expect("should get manager");
+        if let Err(err) = manager.leave(self.guild_id).await {
+            error!("Failed to leave voice channel: {err:?}");
+        }
+
         None
     }
 }
@@ -89,6 +92,10 @@ impl EventHandler for Handler {
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         if old.is_none() {
             if let (Some(member), Some(channel_id)) = (new.member, new.channel_id) {
+                if member.user.name == "MemeJoin" {
+                    return;
+                }
+
                 info!(
                     "{}#{} joined voice channel {:?} in {:?}",
                     member.user.name,
@@ -99,10 +106,6 @@ impl EventHandler for Handler {
                         .name(&ctx.cache)
                         .unwrap_or("no_guild_name".to_string())
                 );
-
-                if member.user.name == "MemeJoin" {
-                    return;
-                }
 
                 let settings = {
                     let data_read = ctx.data.read().await;
@@ -151,8 +154,8 @@ impl EventHandler for Handler {
                             }
                         };
 
-                        let track_handle = handler.play_source(source);
-                        if let Err(err) = track_handle.add_event(
+                        let track_handler = handler.enqueue_source(source);
+                        if let Err(err) = track_handler.add_event(
                             songbird::Event::Track(songbird::TrackEvent::End),
                             TrackEventHandler {
                                 ctx,
