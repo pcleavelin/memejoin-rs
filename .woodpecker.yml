@@ -1,0 +1,25 @@
+pipeline:
+  build:
+    image: alpine:edge
+      - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
+      - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#default
+
+  build-docker-image:
+    when:
+      event: tag
+    image: alpine:edge
+    commands:
+      - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
+      - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#docker
+
+  publish-image:
+    when:
+      event: tag
+    image: git.spacegirl.nl/patrick/plugin-artifact
+    settings:
+      tag: $CI_COMMIT_TAG
+      user: patrick
+      password:
+        from_secret: forgejo_token
+      repo: $CI_REPO
+      image_tar: result
