@@ -35,7 +35,7 @@
         packages = with pkgs; flake-utils.lib.flattenTree rec {
           default = rustPlatform.buildRustPackage rec {
             name = "memejoin-rs";
-            version = "0.1.1-alpha";
+            version = "0.1.2-alpha";
             src = self;
             nativeBuildInputs = [ local-rust cmake gcc libopus ];
 
@@ -46,7 +46,7 @@
 
           docker = dockerTools.buildImage {
             name = "memejoin-rs";
-            tag = "0.1.1.alpha";
+            tag = "0.1.2-alpha";
             copyToRoot = buildEnv {
               name = "image-root";
               paths = [ default ffmpeg libopus youtube-dl ];
