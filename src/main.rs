@@ -2,11 +2,20 @@
 #![feature(proc_macro_hygiene)]
 #![feature(async_closure)]
 
+mod routes;
+pub mod settings;
+
+use axum::http::{HeaderValue, Method};
+use axum::routing::get;
+use axum::Router;
+use futures::StreamExt;
 use songbird::tracks::TrackQueue;
 use std::collections::HashMap;
 use std::env;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tower_http::cors::CorsLayer;
 
 use serde::Deserialize;
 use serenity::async_trait;
@@ -16,6 +25,8 @@ use serenity::prelude::GatewayIntents;
 use serenity::prelude::*;
 use songbird::SerenityInit;
 use tracing::*;
+
+use crate::settings::{Intro, Settings};
 
 enum HandlerMessage {
     Ready(Context),
@@ -50,46 +61,6 @@ impl songbird::EventHandler for TrackEventHandler {
 
         None
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Settings {
-    guilds: HashMap<u64, GuildSettings>,
-}
-impl TypeMapKey for Settings {
-    type Value = Arc<Settings>;
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct GuildSettings {
-    #[serde(alias = "userEnteredSoundDelay")]
-    _sound_delay: u64,
-    channels: HashMap<String, ChannelSettings>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ChannelSettings {
-    #[serde(alias = "enterUsers")]
-    users: HashMap<String, UserSettings>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct UserSettings {
-    #[serde(rename = "type")]
-    ty: SoundType,
-
-    #[serde(alias = "enterSound")]
-    sound: String,
-    #[serde(alias = "youtubeVolume")]
-    _volume: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-enum SoundType {
-    #[serde(alias = "file")]
-    File,
-    #[serde(alias = "youtube")]
-    Youtube,
 }
 
 #[async_trait]
@@ -143,20 +114,31 @@ impl EventHandler for Handler {
     }
 }
 
-#[tokio::main]
-#[instrument]
-async fn main() {
-    tracing_subscriber::fmt::init();
+fn spawn_api(settings: Arc<Mutex<Settings>>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let api = Router::new()
+            .route("/health", get(routes::health))
+            .route("/me/:user", get(routes::me))
+            .route("/intros/:guild", get(routes::intros))
+            .layer(
+                CorsLayer::new()
+                    .allow_origin("*".parse::<HeaderValue>().unwrap())
+                    .allow_methods([Method::GET]),
+            )
+            .with_state(settings);
+        let addr = SocketAddr::from(([0, 0, 0, 0], 7756));
+        info!("socket listening on {addr}");
+        axum::Server::bind(&addr)
+            .serve(api.into_make_service())
+            .await
+            .unwrap();
+    })
+}
+
+async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandle<()>> {
+    let mut tasks = vec![];
 
     let token = env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var");
-
-    let settings = serde_json::from_str::<Settings>(
-        &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
-    )
-    .expect("error parsing settings file");
-
-    info!("{settings:?}");
-
     let songbird = songbird::Songbird::serenity();
 
     let (tx, mut rx) = mpsc::channel(10);
@@ -174,17 +156,18 @@ async fn main() {
         .expect("Error creating client");
 
     info!("Starting bot with token '{token}'");
-    tokio::spawn(async move {
+    tasks.push(tokio::spawn(async move {
         if let Err(err) = client.start().await {
             error!("An error occurred while running the client: {err:?}");
         }
-    });
+    }));
 
-    tokio::spawn(async move {
+    tasks.push(tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
                 HandlerMessage::Ready(ctx) => {
                     info!("Got Ready message");
+                    let settings = settings.lock().await;
 
                     let songbird = songbird::get(&ctx).await.expect("no songbird instance");
 
@@ -199,7 +182,7 @@ async fn main() {
                                 tx: tx.clone(),
                                 guild_id: GuildId(*guild_id),
                             },
-                        );
+                            );
                     }
                 }
                 HandlerMessage::TrackEnded(guild_id) => {
@@ -220,61 +203,102 @@ async fn main() {
 
                 HandlerMessage::PlaySound(ctx, member, channel_id) => {
                     info!("Got PlaySound message");
+                    let settings = settings.lock().await;
 
                     let Some(Channel::Guild(channel)) = channel_id.to_channel_cached(&ctx.cache) else {
                         error!("Failed to get cached channel from member!");
                         continue;
                     };
 
-                    let Some(user) = settings.guilds.get(channel.guild_id.as_u64())
-                        .and_then(|guild| guild.channels.get(channel.name()))
-                        .and_then(|c| c.users.get(&member.user.name))
-                    else {
-                        info!("No sound associated for {} in channel {}", member.user.name, channel.name());
-                        continue;
-                    };
+                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64()) else { continue; };
+                    let Some(channel_settings) = guild_settings.channels.get(channel.name()) else { continue; };
+                    let Some(user) = channel_settings.users.get(&member.user.name) else { continue; };
 
-                    let source = match user.ty {
-                        SoundType::Youtube => match songbird::ytdl(&user.sound).await {
-                            Ok(source) => source,
-                            Err(err) => {
-                                error!(
-                                    "Error starting youtube source from {}: {err:?}",
-                                    user.sound
-                                );
-                                continue;
-                            }
-                        },
-                        SoundType::File => {
-                            match songbird::ffmpeg(format!("sounds/{}", &user.sound)).await {
+                    // TODO: randomly choose a intro to play
+                    let Some(intro) = user.intros.first() else { continue; };
+
+                    let source = match guild_settings.intros.get(intro.0) {
+                            Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
                                 Ok(source) => source,
                                 Err(err) => {
                                     error!(
-                                        "Error starting file source from {}: {err:?}",
-                                        user.sound
-                                    );
+                                        "Error starting youtube source from {}: {err:?}",
+                                        intro.url
+                                        );
                                     continue;
                                 }
+                            },
+                            Some(Intro::File(intro)) => {
+                                match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await {
+                                    Ok(source) => source,
+                                    Err(err) => {
+                                        error!(
+                                            "Error starting file source from {}: {err:?}",
+                                            intro.filename
+                                        );
+                                        continue;
+                                    }
+                                }
+                            },
+                            None => {
+                                error!(
+                                    "Failed to find intro for user {} on guild {} in channel {}, IntroIndex: {}",
+                                    member.user.name, 
+                                    channel.guild_id.as_u64(),
+                                    channel.name(),
+                                    intro.0
+                                );
+                                continue;
+                            }
+                        };
+
+                        match songbird.join(member.guild_id, channel_id).await {
+                            (handler_lock, Ok(())) => {
+                                let mut handler = handler_lock.lock().await;
+
+                                let _track_handler = handler.enqueue_source(source);
+                                // TODO: set volume
+                            }
+
+                            (_, Err(err)) => {
+                                error!("Failed to join voice channel {}: {err:?}", channel.name());
                             }
                         }
-                    };
-
-                    match songbird.join(member.guild_id, channel_id).await {
-                        (handler_lock, Ok(())) => {
-                            let mut handler = handler_lock.lock().await;
-
-                            let _track_handler = handler.enqueue_source(source);
-                            // TODO: set volume
-                        }
-
-                        (_, Err(err)) => {
-                            error!("Failed to join voice channel {}: {err:?}", channel.name());
-                        }
-                    }
                 }
             }
         }
-    });
+    }));
+
+    tasks
+}
+
+#[tokio::main]
+#[instrument]
+async fn main() {
+    tracing_subscriber::fmt::init();
+
+    let settings = serde_json::from_str::<Settings>(
+        &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
+    )
+    .expect("error parsing settings file");
+
+    let (run_api, run_bot) = (settings.run_api, settings.run_bot);
+
+    info!("{settings:?}");
+
+    let mut tasks = vec![];
+
+    let settings = Arc::new(Mutex::new(settings));
+    if run_api {
+        tasks.push(spawn_api(settings.clone()));
+    }
+    if run_bot {
+        tasks.append(&mut spawn_bot(settings.clone()).await);
+    }
+
+    let tasks = futures::stream::iter(tasks);
+    let mut buffered = tasks.buffer_unordered(5);
+    while buffered.next().await.is_some() {}
 
     let _ = tokio::signal::ctrl_c().await;
     info!("Received Ctrl-C, shuttdown down.");
