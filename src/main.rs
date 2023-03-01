@@ -217,7 +217,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                     // TODO: randomly choose a intro to play
                     let Some(intro) = user.intros.first() else { continue; };
 
-                    let source = match guild_settings.intros.get(intro.0) {
+                    let source = match guild_settings.intros.get(intro.index) {
                             Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
                                 Ok(source) => source,
                                 Err(err) => {
@@ -246,7 +246,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                                     member.user.name, 
                                     channel.guild_id.as_u64(),
                                     channel.name(),
-                                    intro.0
+                                    intro.index
                                 );
                                 continue;
                             }

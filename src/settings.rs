@@ -54,7 +54,10 @@ pub(crate) struct ChannelSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct IntroIndex(pub usize, pub i32);
+pub(crate) struct IntroIndex {
+    pub(crate) index: usize,
+    pub(crate) volume: i32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
