@@ -7,6 +7,7 @@ use axum::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tracing::error;
 
 use crate::settings::{GuildSettings, Intro, IntroIndex, Settings, UserSettings};
 
@@ -44,6 +45,49 @@ pub(crate) async fn health(State(state): State<Arc<Mutex<Settings>>>) -> Json<Va
     let settings = state.lock().await;
 
     Json(json!(*settings))
+}
+
+pub(crate) async fn add_intro_to_user(
+    State(state): State<Arc<Mutex<Settings>>>,
+    Path((guild, channel, user, intro_index)): Path<(u64, String, String, usize)>,
+) {
+    let mut settings = state.lock().await;
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else { return; };
+    let Some(channel) = guild.channels.get_mut(&channel) else { return; };
+    let Some(user) = channel.users.get_mut(&user) else { return; };
+
+    user.intros.push(IntroIndex {
+        index: intro_index,
+        volume: 20,
+    });
+
+    if let Err(err) = settings.save() {
+        error!("Failed to save config: {err:?}");
+    }
+}
+
+pub(crate) async fn remove_intro_to_user(
+    State(state): State<Arc<Mutex<Settings>>>,
+    Path((guild, channel, user, intro_index)): Path<(u64, String, String, usize)>,
+) {
+    let mut settings = state.lock().await;
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else { return; };
+    let Some(channel) = guild.channels.get_mut(&channel) else { return; };
+    let Some(user) = channel.users.get_mut(&user) else { return; };
+
+    if let Some(index) = user
+        .intros
+        .iter()
+        .position(|intro| intro_index == intro.index)
+    {
+        user.intros.remove(index);
+    }
+
+    if let Err(err) = settings.save() {
+        error!("Failed to save config: {err:?}");
+    }
 }
 
 pub(crate) async fn intros(

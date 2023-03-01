@@ -16,6 +16,23 @@ impl TypeMapKey for Settings {
     type Value = Arc<Settings>;
 }
 
+impl Settings {
+    pub(crate) fn save(&self) -> Result<(), std::io::Error> {
+        let serialized = serde_json::to_string_pretty(&self)?;
+
+        std::fs::copy(
+            "./config/settings.json",
+            format!(
+                "./config/{}-settings.json.old",
+                chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S")
+            ),
+        )?;
+        std::fs::write("./config/settings.json", serialized)?;
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GuildSettings {

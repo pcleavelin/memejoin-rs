@@ -6,7 +6,7 @@ mod routes;
 pub mod settings;
 
 use axum::http::{HeaderValue, Method};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use futures::StreamExt;
 use songbird::tracks::TrackQueue;
@@ -120,6 +120,8 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) -> tokio::task::JoinHandle<()> {
             .route("/health", get(routes::health))
             .route("/me/:user", get(routes::me))
             .route("/intros/:guild", get(routes::intros))
+            .route("/intros/:guild/:channel/:user/:intro", post(routes::add_intro_to_user))
+            .route("/intros/:guild/:channel/:user/:intro/remove", post(routes::remove_intro_to_user))
             .layer(
                 CorsLayer::new()
                     .allow_origin("*".parse::<HeaderValue>().unwrap())
@@ -210,12 +212,24 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                         continue;
                     };
 
-                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64()) else { continue; };
-                    let Some(channel_settings) = guild_settings.channels.get(channel.name()) else { continue; };
-                    let Some(user) = channel_settings.users.get(&member.user.name) else { continue; };
+                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64()) else {
+                        error!("couldn't get guild from id: {}", channel.guild_id.as_u64());
+                        continue;
+                    };
+                    let Some(channel_settings) = guild_settings.channels.get(channel.name()) else {
+                        error!("couldn't get channel_settings from name: {}", channel.name());
+                        continue;
+                    };
+                    let Some(user) = channel_settings.users.get(&member.user.name) else {
+                        error!("couldn't get user settings from name: {}", &member.user.name);
+                        continue;
+                    };
 
                     // TODO: randomly choose a intro to play
-                    let Some(intro) = user.intros.first() else { continue; };
+                    let Some(intro) = user.intros.first() else {
+                        error!("couldn't get user intro, none exist");
+                        continue;
+                    };
 
                     let source = match guild_settings.intros.get(intro.index) {
                             Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
