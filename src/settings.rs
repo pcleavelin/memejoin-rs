@@ -4,6 +4,21 @@ use serde::{Deserialize, Serialize};
 use serenity::prelude::TypeMapKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Auth {
+    pub(crate) access_token: String,
+    pub(crate) token_type: String,
+    pub(crate) expires_in: usize,
+    pub(crate) refresh_token: String,
+    pub(crate) scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AuthUser {
+    pub auth: Auth,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Settings {
     #[serde(default)]
@@ -11,6 +26,9 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) run_bot: bool,
     pub(crate) guilds: HashMap<u64, GuildSettings>,
+
+    #[serde(skip)]
+    pub(crate) auth_users: HashMap<String, AuthUser>,
 }
 impl TypeMapKey for Settings {
     type Value = Arc<Settings>;

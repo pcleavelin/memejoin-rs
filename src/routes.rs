@@ -1,15 +1,21 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
+    body::StreamBody,
+    extract::{Path, Query, State},
+    http::HeaderMap,
+    response::IntoResponse,
     Json,
 };
-use serde::Serialize;
+use futures::Stream;
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, info};
+use uuid::Uuid;
 
-use crate::settings::{GuildSettings, Intro, IntroIndex, Settings, UserSettings};
+use crate::settings::{Auth, AuthUser, GuildSettings, Intro, IntroIndex, Settings, UserSettings};
 
 #[derive(Serialize)]
 pub(crate) enum IntroResponse<'a> {
@@ -47,11 +53,92 @@ pub(crate) async fn health(State(state): State<Arc<Mutex<Settings>>>) -> Json<Va
     Json(json!(*settings))
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum Error {
+    #[error("{0}")]
+    AuthError(String),
+    #[error("{0}")]
+    GetUser(#[from] reqwest::Error),
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        let body = match self {
+            Self::AuthError(msg) => msg,
+            Self::GetUser(error) => error.to_string(),
+        };
+
+        (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+    }
+}
+
+#[derive(Deserialize)]
+struct DiscordUser {
+    pub username: String,
+}
+
+pub(crate) async fn auth(
+    State(settings): State<Arc<Mutex<Settings>>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, Error> {
+    let Some(code) = params.get("code") else {
+        return Err(Error::AuthError("no code".to_string()));
+    };
+
+    info!("attempting to get access token with code {}", code);
+
+    let mut data = HashMap::new();
+    data.insert("client_id", "577634620728934400");
+    data.insert("client_secret", "CLIENT_SECRET_HERE");
+    data.insert("grant_type", "authorization_code");
+    data.insert("code", code);
+    data.insert("redirect_uri", "http://localhost:5173/auth");
+
+    let client = reqwest::Client::new();
+
+    let auth: Auth = client
+        .post("https://discord.com/api/oauth2/token")
+        .form(&data)
+        .send()
+        .await
+        .map_err(|err| Error::AuthError(err.to_string()))?
+        .json()
+        .await
+        .map_err(|err| Error::AuthError(err.to_string()))?;
+    let token = Uuid::new_v4().to_string();
+
+    // Get authorized username
+    let user: DiscordUser = client
+        .get("https://discord.com/api/v10/users/@me")
+        .bearer_auth(&auth.access_token)
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let mut settings = settings.lock().await;
+    settings.auth_users.insert(
+        token.clone(),
+        AuthUser {
+            auth,
+            name: user.username.clone(),
+        },
+    );
+
+    Ok(Json(json!({"token": token, "username": user.username})))
+}
+
 pub(crate) async fn add_intro_to_user(
     State(state): State<Arc<Mutex<Settings>>>,
-    Path((guild, channel, user, intro_index)): Path<(u64, String, String, usize)>,
+    headers: HeaderMap,
+    Path((guild, channel, intro_index)): Path<(u64, String, usize)>,
 ) {
     let mut settings = state.lock().await;
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return; };
+    let user = match settings.auth_users.get(token) {
+        Some(user) => user.name.clone(),
+        None => return,
+    };
 
     let Some(guild) = settings.guilds.get_mut(&guild) else { return; };
     let Some(channel) = guild.channels.get_mut(&channel) else { return; };
@@ -69,9 +156,15 @@ pub(crate) async fn add_intro_to_user(
 
 pub(crate) async fn remove_intro_to_user(
     State(state): State<Arc<Mutex<Settings>>>,
-    Path((guild, channel, user, intro_index)): Path<(u64, String, String, usize)>,
+    headers: HeaderMap,
+    Path((guild, channel, intro_index)): Path<(u64, String, usize)>,
 ) {
     let mut settings = state.lock().await;
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return; };
+    let user = match settings.auth_users.get(token) {
+        Some(user) => user.name.clone(),
+        None => return,
+    };
 
     let Some(guild) = settings.guilds.get_mut(&guild) else { return; };
     let Some(channel) = guild.channels.get_mut(&channel) else { return; };
@@ -102,9 +195,15 @@ pub(crate) async fn intros(
 
 pub(crate) async fn me(
     State(state): State<Arc<Mutex<Settings>>>,
-    Path(user): Path<String>,
+    headers: HeaderMap,
 ) -> Json<Value> {
     let settings = state.lock().await;
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Json(json!(MeResponse::NoUserFound)); };
+
+    let user = match settings.auth_users.get(token) {
+        Some(user) => user.name.clone(),
+        None => return Json(json!(MeResponse::NoUserFound)),
+    };
 
     let mut me = Me {
         username: user.clone(),

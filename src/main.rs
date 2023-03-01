@@ -15,7 +15,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 
 use serde::Deserialize;
 use serenity::async_trait;
@@ -118,14 +118,22 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let api = Router::new()
             .route("/health", get(routes::health))
-            .route("/me/:user", get(routes::me))
+            .route("/me", get(routes::me))
             .route("/intros/:guild", get(routes::intros))
-            .route("/intros/:guild/:channel/:user/:intro", post(routes::add_intro_to_user))
-            .route("/intros/:guild/:channel/:user/:intro/remove", post(routes::remove_intro_to_user))
+            .route(
+                "/intros/:guild/:channel/:user/:intro",
+                post(routes::add_intro_to_user),
+            )
+            .route(
+                "/intros/:guild/:channel/:user/:intro/remove",
+                post(routes::remove_intro_to_user),
+            )
+            .route("/auth", get(routes::auth))
             .layer(
                 CorsLayer::new()
-                    .allow_origin("*".parse::<HeaderValue>().unwrap())
-                    .allow_methods([Method::GET]),
+                    .allow_origin(Any)
+                    .allow_headers(Any)
+                    .allow_methods([Method::GET, Method::POST]),
             )
             .with_state(settings);
         let addr = SocketAddr::from(([0, 0, 0, 0], 7756));
@@ -257,7 +265,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                             None => {
                                 error!(
                                     "Failed to find intro for user {} on guild {} in channel {}, IntroIndex: {}",
-                                    member.user.name, 
+                                    member.user.name,
                                     channel.guild_id.as_u64(),
                                     channel.name(),
                                     intro.index
