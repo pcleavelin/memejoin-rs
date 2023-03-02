@@ -9,6 +9,7 @@ use axum::http::{HeaderValue, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use futures::StreamExt;
+use settings::{ApiState, DiscordSecret};
 use songbird::tracks::TrackQueue;
 use std::collections::HashMap;
 use std::env;
@@ -114,7 +115,15 @@ impl EventHandler for Handler {
     }
 }
 
-fn spawn_api(settings: Arc<Mutex<Settings>>) -> tokio::task::JoinHandle<()> {
+fn spawn_api(settings: Arc<Mutex<Settings>>) {
+    let secrets = DiscordSecret {
+        client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
+        client_secret: env::var("DISCORD_CLIENT_SECRET")
+            .expect("expected DISCORD_CLIENT_SECRET env var"),
+    };
+
+    let state = ApiState { settings, secrets };
+
     tokio::spawn(async move {
         let api = Router::new()
             .route("/health", get(routes::health))
@@ -135,19 +144,17 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) -> tokio::task::JoinHandle<()> {
                     .allow_headers(Any)
                     .allow_methods([Method::GET, Method::POST]),
             )
-            .with_state(settings);
+            .with_state(Arc::new(state));
         let addr = SocketAddr::from(([0, 0, 0, 0], 7756));
         info!("socket listening on {addr}");
         axum::Server::bind(&addr)
             .serve(api.into_make_service())
             .await
             .unwrap();
-    })
+    });
 }
 
-async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandle<()>> {
-    let mut tasks = vec![];
-
+async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
     let token = env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var");
     let songbird = songbird::Songbird::serenity();
 
@@ -166,13 +173,13 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
         .expect("Error creating client");
 
     info!("Starting bot with token '{token}'");
-    tasks.push(tokio::spawn(async move {
+    tokio::spawn(async move {
         if let Err(err) = client.start().await {
             error!("An error occurred while running the client: {err:?}");
         }
-    }));
+    });
 
-    tasks.push(tokio::spawn(async move {
+    tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg {
                 HandlerMessage::Ready(ctx) => {
@@ -192,7 +199,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                                 tx: tx.clone(),
                                 guild_id: GuildId(*guild_id),
                             },
-                            );
+                        );
                     }
                 }
                 HandlerMessage::TrackEnded(guild_id) => {
@@ -240,63 +247,58 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) -> Vec<tokio::task::JoinHandl
                     };
 
                     let source = match guild_settings.intros.get(intro.index) {
-                            Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
+                        Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
+                            Ok(source) => source,
+                            Err(err) => {
+                                error!("Error starting youtube source from {}: {err:?}", intro.url);
+                                continue;
+                            }
+                        },
+                        Some(Intro::File(intro)) => {
+                            match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await {
                                 Ok(source) => source,
                                 Err(err) => {
                                     error!(
-                                        "Error starting youtube source from {}: {err:?}",
-                                        intro.url
-                                        );
+                                        "Error starting file source from {}: {err:?}",
+                                        intro.filename
+                                    );
                                     continue;
                                 }
-                            },
-                            Some(Intro::File(intro)) => {
-                                match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await {
-                                    Ok(source) => source,
-                                    Err(err) => {
-                                        error!(
-                                            "Error starting file source from {}: {err:?}",
-                                            intro.filename
-                                        );
-                                        continue;
-                                    }
-                                }
-                            },
-                            None => {
-                                error!(
-                                    "Failed to find intro for user {} on guild {} in channel {}, IntroIndex: {}",
-                                    member.user.name,
-                                    channel.guild_id.as_u64(),
-                                    channel.name(),
-                                    intro.index
-                                );
-                                continue;
-                            }
-                        };
-
-                        match songbird.join(member.guild_id, channel_id).await {
-                            (handler_lock, Ok(())) => {
-                                let mut handler = handler_lock.lock().await;
-
-                                let _track_handler = handler.enqueue_source(source);
-                                // TODO: set volume
-                            }
-
-                            (_, Err(err)) => {
-                                error!("Failed to join voice channel {}: {err:?}", channel.name());
                             }
                         }
+                        None => {
+                            error!(
+                                "Failed to find intro for user {} on guild {} in channel {}, IntroIndex: {}",
+                                member.user.name,
+                                channel.guild_id.as_u64(),
+                                channel.name(),
+                                intro.index
+                                );
+                            continue;
+                        }
+                    };
+
+                    match songbird.join(member.guild_id, channel_id).await {
+                        (handler_lock, Ok(())) => {
+                            let mut handler = handler_lock.lock().await;
+
+                            let _track_handler = handler.enqueue_source(source);
+                            // TODO: set volume
+                        }
+
+                        (_, Err(err)) => {
+                            error!("Failed to join voice channel {}: {err:?}", channel.name());
+                        }
+                    }
                 }
             }
         }
-    }));
-
-    tasks
+    });
 }
 
 #[tokio::main]
 #[instrument]
-async fn main() {
+async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt::init();
 
     let settings = serde_json::from_str::<Settings>(
@@ -308,20 +310,19 @@ async fn main() {
 
     info!("{settings:?}");
 
-    let mut tasks = vec![];
-
     let settings = Arc::new(Mutex::new(settings));
     if run_api {
-        tasks.push(spawn_api(settings.clone()));
+        spawn_api(settings.clone());
     }
     if run_bot {
-        tasks.append(&mut spawn_bot(settings.clone()).await);
+        spawn_bot(settings.clone()).await;
     }
 
-    let tasks = futures::stream::iter(tasks);
-    let mut buffered = tasks.buffer_unordered(5);
-    while buffered.next().await.is_some() {}
+    info!("spawned background tasks");
 
     let _ = tokio::signal::ctrl_c().await;
+    settings.lock().await.save()?;
     info!("Received Ctrl-C, shuttdown down.");
+
+    Ok(())
 }

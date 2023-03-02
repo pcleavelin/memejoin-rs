@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serenity::prelude::TypeMapKey;
+use tracing::trace;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Auth {
@@ -18,6 +19,17 @@ pub(crate) struct AuthUser {
     pub name: String,
 }
 
+pub(crate) struct ApiState {
+    pub settings: Arc<tokio::sync::Mutex<Settings>>,
+    pub secrets: DiscordSecret,
+}
+
+#[derive(Clone)]
+pub(crate) struct DiscordSecret {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Settings {
@@ -27,7 +39,7 @@ pub(crate) struct Settings {
     pub(crate) run_bot: bool,
     pub(crate) guilds: HashMap<u64, GuildSettings>,
 
-    #[serde(skip)]
+    #[serde(default)]
     pub(crate) auth_users: HashMap<String, AuthUser>,
 }
 impl TypeMapKey for Settings {
@@ -36,6 +48,7 @@ impl TypeMapKey for Settings {
 
 impl Settings {
     pub(crate) fn save(&self) -> Result<(), std::io::Error> {
+        trace!("attempting to save config");
         let serialized = serde_json::to_string_pretty(&self)?;
 
         std::fs::copy(
@@ -45,8 +58,11 @@ impl Settings {
                 chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S")
             ),
         )?;
+        trace!("created copy of original settings");
+
         std::fs::write("./config/settings.json", serialized)?;
 
+        trace!("saved settings to disk");
         Ok(())
     }
 }
