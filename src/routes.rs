@@ -13,11 +13,12 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::settings::{ApiState, Auth, AuthUser, Intro, IntroIndex};
+use crate::settings::{ApiState, Intro, IntroIndex};
+use crate::{auth, settings::FileIntro};
 
 #[derive(Serialize)]
 pub(crate) enum IntroResponse<'a> {
-    Intros(&'a Vec<Intro>),
+    Intros(&'a HashMap<String, Intro>),
     NoGuildFound,
 }
 
@@ -52,19 +53,44 @@ pub(crate) async fn health() -> &'static str {
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
     #[error("{0}")]
-    AuthError(String),
+    Auth(String),
     #[error("{0}")]
     GetUser(#[from] reqwest::Error),
+
+    #[error("User doesn't exist")]
+    NoUserFound,
+    #[error("Guild doesn't exist")]
+    NoGuildFound,
+    #[error("invalid request")]
+    InvalidRequest,
+
+    #[error("Invalid permissions for request")]
+    InvalidPermission,
+    #[error("{0}")]
+    Ytdl(#[from] std::io::Error),
+
+    #[error("ytdl terminated unsuccessfully")]
+    YtdlTerminated,
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
-        let body = match self {
-            Self::AuthError(msg) => msg,
-            Self::GetUser(error) => error.to_string(),
-        };
+        match self {
+            Self::Auth(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
+            Self::GetUser(error) => (StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
 
-        (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+            Self::NoGuildFound => (StatusCode::NOT_FOUND, self.to_string()).into_response(),
+            Self::NoUserFound => (StatusCode::NOT_FOUND, self.to_string()).into_response(),
+            Self::InvalidRequest => (StatusCode::BAD_REQUEST, self.to_string()).into_response(),
+
+            Self::InvalidPermission => (StatusCode::UNAUTHORIZED, self.to_string()).into_response(),
+            Self::Ytdl(error) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+            }
+            Self::YtdlTerminated => {
+                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+            }
+        }
     }
 }
 
@@ -78,7 +104,7 @@ pub(crate) async fn auth(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, Error> {
     let Some(code) = params.get("code") else {
-        return Err(Error::AuthError("no code".to_string()));
+        return Err(Error::Auth("no code".to_string()));
     };
 
     info!("attempting to get access token with code {}", code);
@@ -92,15 +118,15 @@ pub(crate) async fn auth(
 
     let client = reqwest::Client::new();
 
-    let auth: Auth = client
+    let auth: auth::Discord = client
         .post("https://discord.com/api/oauth2/token")
         .form(&data)
         .send()
         .await
-        .map_err(|err| Error::AuthError(err.to_string()))?
+        .map_err(|err| Error::Auth(err.to_string()))?
         .json()
         .await
-        .map_err(|err| Error::AuthError(err.to_string()))?;
+        .map_err(|err| Error::Auth(err.to_string()))?;
     let token = Uuid::new_v4().to_string();
 
     // Get authorized username
@@ -115,8 +141,10 @@ pub(crate) async fn auth(
     let mut settings = state.settings.lock().await;
     settings.auth_users.insert(
         token.clone(),
-        AuthUser {
+        auth::User {
             auth,
+            // TODO: replace with roles
+            permissions: auth::Permissions::default(),
             name: user.username.clone(),
         },
     );
@@ -127,7 +155,7 @@ pub(crate) async fn auth(
 pub(crate) async fn add_intro_to_user(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
-    Path((guild, channel, intro_index)): Path<(u64, String, usize)>,
+    Path((guild, channel, intro_index)): Path<(u64, String, String)>,
 ) {
     let mut settings = state.settings.lock().await;
     let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return; };
@@ -140,20 +168,22 @@ pub(crate) async fn add_intro_to_user(
     let Some(channel) = guild.channels.get_mut(&channel) else { return; };
     let Some(user) = channel.users.get_mut(&user) else { return; };
 
-    user.intros.push(IntroIndex {
-        index: intro_index,
-        volume: 20,
-    });
+    if !user.intros.iter().any(|intro| intro.index == intro_index) {
+        user.intros.push(IntroIndex {
+            index: intro_index,
+            volume: 20,
+        });
 
-    if let Err(err) = settings.save() {
-        error!("Failed to save config: {err:?}");
+        if let Err(err) = settings.save() {
+            error!("Failed to save config: {err:?}");
+        }
     }
 }
 
 pub(crate) async fn remove_intro_to_user(
     State(state): State<Arc<ApiState>>,
     headers: HeaderMap,
-    Path((guild, channel, intro_index)): Path<(u64, String, usize)>,
+    Path((guild, channel, intro_index)): Path<(u64, String, String)>,
 ) {
     let mut settings = state.settings.lock().await;
     let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return; };
@@ -228,4 +258,51 @@ pub(crate) async fn me(State(state): State<Arc<ApiState>>, headers: HeaderMap) -
     } else {
         Json(json!(MeResponse::Me(me)))
     }
+}
+
+pub(crate) async fn add_guild_intro(
+    State(state): State<Arc<ApiState>>,
+    Path((guild, url)): Path<(u64, String)>,
+    Query(mut params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Result<(), Error> {
+    let mut settings = state.settings.lock().await;
+    // TODO: make this an impl on HeaderMap
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
+    let Some(friendly_name) = params.remove("name") else { return Err(Error::InvalidRequest); };
+    let user = match settings.auth_users.get(token) {
+        Some(user) => user,
+        None => return Err(Error::NoUserFound),
+    };
+
+    if !user.permissions.can(auth::Permission::DownloadSounds) {
+        return Err(Error::InvalidPermission);
+    }
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else { return Err(Error::NoGuildFound); };
+
+    let uuid = Uuid::new_v4().to_string();
+    let child = tokio::process::Command::new("yt-dlp")
+        .arg(&url)
+        .args(["-o", &format!("./sounds/{uuid}")])
+        .args(["-x", "--audio-format", "mp3"])
+        .spawn()
+        .map_err(Error::Ytdl)?
+        .wait()
+        .await
+        .map_err(Error::Ytdl)?;
+
+    if !child.success() {
+        return Err(Error::YtdlTerminated);
+    }
+
+    guild.intros.insert(
+        uuid.clone(),
+        Intro::File(FileIntro {
+            filename: format!("{uuid}.mp3"),
+            friendly_name,
+        }),
+    );
+
+    Ok(())
 }

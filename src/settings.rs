@@ -1,33 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::auth;
 use serde::{Deserialize, Serialize};
 use serenity::prelude::TypeMapKey;
 use tracing::trace;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Auth {
-    pub(crate) access_token: String,
-    pub(crate) token_type: String,
-    pub(crate) expires_in: usize,
-    pub(crate) refresh_token: String,
-    pub(crate) scope: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AuthUser {
-    pub auth: Auth,
-    pub name: String,
-}
+use uuid::Uuid;
 
 pub(crate) struct ApiState {
     pub settings: Arc<tokio::sync::Mutex<Settings>>,
-    pub secrets: DiscordSecret,
-}
-
-#[derive(Clone)]
-pub(crate) struct DiscordSecret {
-    pub client_id: String,
-    pub client_secret: String,
+    pub secrets: auth::DiscordSecret,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +21,7 @@ pub(crate) struct Settings {
     pub(crate) guilds: HashMap<u64, GuildSettings>,
 
     #[serde(default)]
-    pub(crate) auth_users: HashMap<String, AuthUser>,
+    pub(crate) auth_users: HashMap<String, auth::User>,
 }
 impl TypeMapKey for Settings {
     type Value = Arc<Settings>;
@@ -73,7 +54,7 @@ pub(crate) struct GuildSettings {
     #[serde(alias = "userEnteredSoundDelay")]
     pub(crate) sound_delay: u64,
     pub(crate) channels: HashMap<String, ChannelSettings>,
-    pub(crate) intros: Vec<Intro>,
+    pub(crate) intros: HashMap<String, Intro>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,7 +87,7 @@ pub(crate) struct ChannelSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct IntroIndex {
-    pub(crate) index: usize,
+    pub(crate) index: String,
     pub(crate) volume: i32,
 }
 

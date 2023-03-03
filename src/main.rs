@@ -2,6 +2,7 @@
 #![feature(proc_macro_hygiene)]
 #![feature(async_closure)]
 
+mod auth;
 mod routes;
 pub mod settings;
 
@@ -9,7 +10,7 @@ use axum::http::{HeaderValue, Method};
 use axum::routing::{get, post};
 use axum::Router;
 use futures::StreamExt;
-use settings::{ApiState, DiscordSecret};
+use settings::ApiState;
 use songbird::tracks::TrackQueue;
 use std::collections::HashMap;
 use std::env;
@@ -116,7 +117,7 @@ impl EventHandler for Handler {
 }
 
 fn spawn_api(settings: Arc<Mutex<Settings>>) {
-    let secrets = DiscordSecret {
+    let secrets = auth::DiscordSecret {
         client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
         client_secret: env::var("DISCORD_CLIENT_SECRET")
             .expect("expected DISCORD_CLIENT_SECRET env var"),
@@ -128,13 +129,14 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
         let api = Router::new()
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
+            .route("/intros/:guild/add/:url", get(routes::add_guild_intro))
             .route("/intros/:guild", get(routes::intros))
             .route(
-                "/intros/:guild/:channel/:user/:intro",
+                "/intros/:guild/:channel/:intro",
                 post(routes::add_intro_to_user),
             )
             .route(
-                "/intros/:guild/:channel/:user/:intro/remove",
+                "/intros/:guild/:channel/:intro/remove",
                 post(routes::remove_intro_to_user),
             )
             .route("/auth", get(routes::auth))
@@ -246,7 +248,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
                         continue;
                     };
 
-                    let source = match guild_settings.intros.get(intro.index) {
+                    let source = match guild_settings.intros.get(&intro.index) {
                         Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
                             Ok(source) => source,
                             Err(err) => {
