@@ -12,6 +12,16 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+        yt-dlp = pkgs.yt-dlp.overrideAttrs (oldAttr: rec {
+          inherit (oldAttr) name;
+          version = "2023.02.17";
+          src = pkgs.fetchFromGitHub {
+            owner = "yt-dlp";
+            repo = "yt-dlp";
+            rev = "${version}";
+            sha256 = "naC74T6aqCLX45wJLmygsMmTMqdqLbfXLjJKIKMRpiI=";
+          };
+        });
         local-rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain).override {
           extensions = [ "rust-analysis" ];
         };
@@ -28,7 +38,7 @@
             ffmpeg
             cmake
             libopus
-            youtube-dl
+            yt-dlp
           ];
         };
 
