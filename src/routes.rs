@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::settings::{ApiState, Intro, IntroIndex};
+use crate::settings::{ApiState, Intro, IntroIndex, UserSettings};
 use crate::{auth, settings::FileIntro};
 
 #[derive(Serialize)]
@@ -38,6 +38,7 @@ pub(crate) struct Me<'a> {
 pub(crate) struct MeGuild<'a> {
     pub(crate) name: String,
     pub(crate) channels: Vec<MeChannel<'a>>,
+    pub(crate) permissions: auth::Permissions,
 }
 
 #[derive(Serialize)]
@@ -99,6 +100,13 @@ struct DiscordUser {
     pub username: String,
 }
 
+#[derive(Deserialize)]
+struct DiscordUserGuild {
+    pub id: String,
+    pub name: String,
+    pub owner: bool,
+}
+
 pub(crate) async fn auth(
     State(state): State<Arc<ApiState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -114,7 +122,7 @@ pub(crate) async fn auth(
     data.insert("client_secret", state.secrets.client_secret.as_str());
     data.insert("grant_type", "authorization_code");
     data.insert("code", code);
-    data.insert("redirect_uri", "http://localhost:5173/auth");
+    data.insert("redirect_uri", "https://spacegirl.nl/memes/auth");
 
     let client = reqwest::Client::new();
 
@@ -219,34 +227,66 @@ pub(crate) async fn intros(
     Json(json!(IntroResponse::Intros(&guild.intros)))
 }
 
-pub(crate) async fn me(State(state): State<Arc<ApiState>>, headers: HeaderMap) -> Json<Value> {
-    let settings = state.settings.lock().await;
-    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Json(json!(MeResponse::NoUserFound)); };
+pub(crate) async fn me(
+    State(state): State<Arc<ApiState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Error> {
+    let mut settings = state.settings.lock().await;
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
 
-    let user = match settings.auth_users.get(token) {
-        Some(user) => user.name.clone(),
-        None => return Json(json!(MeResponse::NoUserFound)),
+    let (username, permissions, access_token) = match settings.auth_users.get(token) {
+        Some(user) => (
+            user.name.clone(),
+            user.permissions,
+            user.auth.access_token.clone(),
+        ),
+        None => return Err(Error::NoUserFound),
     };
 
+    // TODO: get bot's guilds so we only save users who are able to use the bot
+    let discord_guilds: Vec<DiscordUserGuild> = reqwest::Client::new()
+        .get("https://discord.com/api/v10/users/@me/guilds")
+        .bearer_auth(access_token)
+        .send()
+        .await?
+        .json()
+        .await
+        .map_err(|err| {
+            settings.auth_users.remove(token);
+
+            Error::Auth(err.to_string())
+        })?;
+
     let mut me = Me {
-        username: user.clone(),
+        username: username.clone(),
         guilds: Vec::new(),
     };
 
-    for g in &settings.guilds {
+    for g in settings.guilds.iter_mut() {
+        // TODO: don't do this n^2 lookup
+        let Some(discord_guild) = discord_guilds.iter().find(|discord_guild| discord_guild.id == g.0.to_string()) else { continue; };
+
         let mut guild = MeGuild {
             name: g.0.to_string(),
             channels: Vec::new(),
+            // TODO: change `auth::User` to have guild specific permissions instead of global
+            permissions,
         };
 
-        for channel in &g.1.channels {
-            let user_settings = channel.1.users.iter().find(|u| *u.0 == user);
+        for channel in g.1.channels.iter_mut() {
+            let user_settings = channel
+                .1
+                .users
+                .entry(username.clone())
+                .or_insert(UserSettings { intros: Vec::new() });
 
-            let Some(user) = user_settings else { continue; };
+            if discord_guild.owner {
+                guild.permissions.0 |= auth::Permission::DownloadSounds as u8;
+            }
 
             guild.channels.push(MeChannel {
                 name: channel.0.to_owned(),
-                intros: &user.1.intros,
+                intros: &user_settings.intros,
             });
         }
 
@@ -254,22 +294,24 @@ pub(crate) async fn me(State(state): State<Arc<ApiState>>, headers: HeaderMap) -
     }
 
     if me.guilds.is_empty() {
-        Json(json!(MeResponse::NoUserFound))
+        Ok(Json(json!(MeResponse::NoUserFound)))
     } else {
-        Json(json!(MeResponse::Me(me)))
+        Ok(Json(json!(MeResponse::Me(me))))
     }
 }
 
 pub(crate) async fn add_guild_intro(
     State(state): State<Arc<ApiState>>,
-    Path((guild, url)): Path<(u64, String)>,
+    Path(guild): Path<u64>,
     Query(mut params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<(), Error> {
     let mut settings = state.settings.lock().await;
     // TODO: make this an impl on HeaderMap
     let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
+    let Some(url) = params.remove("url") else { return Err(Error::InvalidRequest); };
     let Some(friendly_name) = params.remove("name") else { return Err(Error::InvalidRequest); };
+
     let user = match settings.auth_users.get(token) {
         Some(user) => user,
         None => return Err(Error::NoUserFound),
@@ -284,7 +326,7 @@ pub(crate) async fn add_guild_intro(
     let uuid = Uuid::new_v4().to_string();
     let child = tokio::process::Command::new("yt-dlp")
         .arg(&url)
-        .args(["-o", &format!("./sounds/{uuid}")])
+        .args(["-o", &format!("sounds/{uuid}")])
         .args(["-x", "--audio-format", "mp3"])
         .spawn()
         .map_err(Error::Ytdl)?

@@ -34,6 +34,7 @@
             pkg-config
             gcc
             openssl
+            pkg-config
             python3
             ffmpeg
             cmake
@@ -47,7 +48,8 @@
             name = "memejoin-rs";
             version = "0.1.2-alpha";
             src = self;
-            nativeBuildInputs = [ local-rust cmake gcc libopus ];
+            buildInputs = [ openssl.dev ];
+            nativeBuildInputs = [ local-rust pkg-config openssl openssl.dev cmake gcc libopus ];
 
             cargoLock = {
               lockFile = ./Cargo.lock;
@@ -59,7 +61,7 @@
             tag = "0.1.2-alpha";
             copyToRoot = buildEnv {
               name = "image-root";
-              paths = [ default ffmpeg libopus youtube-dl ];
+              paths = [ default cacert openssl openssl.dev ffmpeg libopus youtube-dl yt-dlp ];
             };
             runAsRoot = ''
               #!${runtimeShell}

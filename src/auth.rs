@@ -27,8 +27,8 @@ pub(crate) struct User {
     pub(crate) name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Permissions(u8);
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub(crate) struct Permissions(pub(crate) u8);
 impl Default for Permissions {
     fn default() -> Permissions {
         Permissions(0)

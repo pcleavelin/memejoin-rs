@@ -129,7 +129,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
         let api = Router::new()
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
-            .route("/intros/:guild/add/:url", get(routes::add_guild_intro))
+            .route("/intros/:guild/add", get(routes::add_guild_intro))
             .route("/intros/:guild", get(routes::intros))
             .route(
                 "/intros/:guild/:channel/:intro",
@@ -142,12 +142,13 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
             .route("/auth", get(routes::auth))
             .layer(
                 CorsLayer::new()
-                    .allow_origin(Any)
+                    // TODO: move this to env variable
+                    .allow_origin(["https://spacegirl.nl".parse().unwrap()])
                     .allow_headers(Any)
                     .allow_methods([Method::GET, Method::POST]),
             )
             .with_state(Arc::new(state));
-        let addr = SocketAddr::from(([0, 0, 0, 0], 7756));
+        let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
         info!("socket listening on {addr}");
         axum::Server::bind(&addr)
             .serve(api.into_make_service())
