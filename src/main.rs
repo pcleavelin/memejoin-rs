@@ -122,8 +122,13 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
         client_secret: env::var("DISCORD_CLIENT_SECRET")
             .expect("expected DISCORD_CLIENT_SECRET env var"),
     };
+    let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
-    let state = ApiState { settings, secrets };
+    let state = ApiState {
+        settings,
+        secrets,
+        origin: origin.clone(),
+    };
 
     tokio::spawn(async move {
         let api = Router::new()
@@ -143,12 +148,12 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
             .layer(
                 CorsLayer::new()
                     // TODO: move this to env variable
-                    .allow_origin(["https://spacegirl.nl".parse().unwrap()])
+                    .allow_origin([origin.parse().unwrap()])
                     .allow_headers(Any)
                     .allow_methods([Method::GET, Method::POST]),
             )
             .with_state(Arc::new(state));
-        let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+        let addr = SocketAddr::from(([0, 0, 0, 0], 8100));
         info!("socket listening on {addr}");
         axum::Server::bind(&addr)
             .serve(api.into_make_service())

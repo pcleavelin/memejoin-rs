@@ -76,6 +76,8 @@ pub(crate) enum Error {
 
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
+        error!("{self}");
+
         match self {
             Self::Auth(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
             Self::GetUser(error) => (StatusCode::UNAUTHORIZED, error.to_string()).into_response(),
@@ -118,11 +120,13 @@ pub(crate) async fn auth(
     info!("attempting to get access token with code {}", code);
 
     let mut data = HashMap::new();
+
+    let redirect_uri = format!("{}/auth", state.origin);
     data.insert("client_id", state.secrets.client_id.as_str());
     data.insert("client_secret", state.secrets.client_secret.as_str());
     data.insert("grant_type", "authorization_code");
     data.insert("code", code);
-    data.insert("redirect_uri", "https://spacegirl.nl/memes/auth");
+    data.insert("redirect_uri", &redirect_uri);
 
     let client = reqwest::Client::new();
 

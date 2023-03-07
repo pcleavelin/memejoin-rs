@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub(crate) struct ApiState {
     pub settings: Arc<tokio::sync::Mutex<Settings>>,
     pub secrets: auth::DiscordSecret,
+    pub origin: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
