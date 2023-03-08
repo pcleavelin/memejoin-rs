@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::settings::{ApiState, Intro, IntroIndex, UserSettings};
+use crate::settings::{ApiState, GuildUser, Intro, IntroIndex, UserSettings};
 use crate::{auth, settings::FileIntro};
 
 #[derive(Serialize)]
@@ -36,6 +36,8 @@ pub(crate) struct Me<'a> {
 
 #[derive(Serialize)]
 pub(crate) struct MeGuild<'a> {
+    // NOTE(pcleavelin): for some reason this doesn't serialize properly if a u64
+    pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) channels: Vec<MeChannel<'a>>,
     pub(crate) permissions: auth::Permissions,
@@ -150,16 +152,51 @@ pub(crate) async fn auth(
         .json()
         .await?;
 
+    // TODO: get bot's guilds so we only save users who are able to use the bot
+    let discord_guilds: Vec<DiscordUserGuild> = client
+        .get("https://discord.com/api/v10/users/@me/guilds")
+        .bearer_auth(&auth.access_token)
+        .send()
+        .await?
+        .json()
+        .await
+        .map_err(|err| Error::Auth(err.to_string()))?;
+
     let mut settings = state.settings.lock().await;
+    let mut in_a_guild = false;
+    for g in settings.guilds.iter_mut() {
+        let Some(discord_guild) = discord_guilds
+            .iter()
+            .find(|discord_guild| discord_guild.id == g.0.to_string()) else { continue; };
+
+        in_a_guild = true;
+
+        if !g.1.users.contains_key(&user.username) {
+            g.1.users.insert(
+                user.username.clone(),
+                GuildUser {
+                    permissions: if discord_guild.owner {
+                        auth::Permissions(auth::Permission::all())
+                    } else {
+                        Default::default()
+                    },
+                },
+            );
+        }
+    }
+
+    if !in_a_guild {
+        return Err(Error::NoGuildFound);
+    }
+
     settings.auth_users.insert(
         token.clone(),
         auth::User {
             auth,
-            // TODO: replace with roles
-            permissions: auth::Permissions::default(),
             name: user.username.clone(),
         },
     );
+    // TODO: add permissions based on roles
 
     Ok(Json(json!({"token": token, "username": user.username})))
 }
@@ -186,9 +223,10 @@ pub(crate) async fn add_intro_to_user(
             volume: 20,
         });
 
-        if let Err(err) = settings.save() {
-            error!("Failed to save config: {err:?}");
-        }
+        // TODO: don't save on every change
+        //if let Err(err) = settings.save() {
+        //    error!("Failed to save config: {err:?}");
+        //}
     }
 }
 
@@ -216,9 +254,10 @@ pub(crate) async fn remove_intro_to_user(
         user.intros.remove(index);
     }
 
-    if let Err(err) = settings.save() {
-        error!("Failed to save config: {err:?}");
-    }
+    // TODO: don't save on every change
+    //if let Err(err) = settings.save() {
+    //    error!("Failed to save config: {err:?}");
+    //}
 }
 
 pub(crate) async fn intros(
@@ -238,28 +277,10 @@ pub(crate) async fn me(
     let mut settings = state.settings.lock().await;
     let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
 
-    let (username, permissions, access_token) = match settings.auth_users.get(token) {
-        Some(user) => (
-            user.name.clone(),
-            user.permissions,
-            user.auth.access_token.clone(),
-        ),
+    let (username, access_token) = match settings.auth_users.get(token) {
+        Some(user) => (user.name.clone(), user.auth.access_token.clone()),
         None => return Err(Error::NoUserFound),
     };
-
-    // TODO: get bot's guilds so we only save users who are able to use the bot
-    let discord_guilds: Vec<DiscordUserGuild> = reqwest::Client::new()
-        .get("https://discord.com/api/v10/users/@me/guilds")
-        .bearer_auth(access_token)
-        .send()
-        .await?
-        .json()
-        .await
-        .map_err(|err| {
-            settings.auth_users.remove(token);
-
-            Error::Auth(err.to_string())
-        })?;
 
     let mut me = Me {
         username: username.clone(),
@@ -268,13 +289,18 @@ pub(crate) async fn me(
 
     for g in settings.guilds.iter_mut() {
         // TODO: don't do this n^2 lookup
-        let Some(discord_guild) = discord_guilds.iter().find(|discord_guild| discord_guild.id == g.0.to_string()) else { continue; };
+
+        let guild_user =
+            g.1.users
+                // TODO: why must clone
+                .entry(username.clone())
+                .or_insert(Default::default());
 
         let mut guild = MeGuild {
-            name: g.0.to_string(),
+            id: g.0.to_string(),
+            name: g.1.name.clone(),
             channels: Vec::new(),
-            // TODO: change `auth::User` to have guild specific permissions instead of global
-            permissions,
+            permissions: guild_user.permissions,
         };
 
         for channel in g.1.channels.iter_mut() {
@@ -283,10 +309,6 @@ pub(crate) async fn me(
                 .users
                 .entry(username.clone())
                 .or_insert(UserSettings { intros: Vec::new() });
-
-            if discord_guild.owner {
-                guild.permissions.0 |= auth::Permission::DownloadSounds as u8;
-            }
 
             guild.channels.push(MeChannel {
                 name: channel.0.to_owned(),
@@ -316,13 +338,17 @@ pub(crate) async fn add_guild_intro(
     let Some(url) = params.remove("url") else { return Err(Error::InvalidRequest); };
     let Some(friendly_name) = params.remove("name") else { return Err(Error::InvalidRequest); };
 
-    let user = match settings.auth_users.get(token) {
-        Some(user) => user,
-        None => return Err(Error::NoUserFound),
-    };
+    {
+        let Some(guild) = settings.guilds.get(&guild) else { return Err(Error::NoGuildFound); };
+        let auth_user = match settings.auth_users.get(token) {
+            Some(user) => user,
+            None => return Err(Error::NoUserFound),
+        };
+        let Some(guild_user) = guild.users.get(&auth_user.name) else { return Err(Error::NoUserFound) };
 
-    if !user.permissions.can(auth::Permission::DownloadSounds) {
-        return Err(Error::InvalidPermission);
+        if !guild_user.permissions.can(auth::Permission::DownloadSounds) {
+            return Err(Error::InvalidPermission);
+        }
     }
 
     let Some(guild) = settings.guilds.get_mut(&guild) else { return Err(Error::NoGuildFound); };

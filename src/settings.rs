@@ -6,6 +6,8 @@ use serenity::prelude::TypeMapKey;
 use tracing::trace;
 use uuid::Uuid;
 
+type UserToken = String;
+
 pub(crate) struct ApiState {
     pub settings: Arc<tokio::sync::Mutex<Settings>>,
     pub secrets: auth::DiscordSecret,
@@ -22,7 +24,7 @@ pub(crate) struct Settings {
     pub(crate) guilds: HashMap<u64, GuildSettings>,
 
     #[serde(default)]
-    pub(crate) auth_users: HashMap<String, auth::User>,
+    pub(crate) auth_users: HashMap<UserToken, auth::User>,
 }
 impl TypeMapKey for Settings {
     type Value = Arc<Settings>;
@@ -52,10 +54,20 @@ impl Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GuildSettings {
-    #[serde(alias = "userEnteredSoundDelay")]
+    pub(crate) name: String,
     pub(crate) sound_delay: u64,
+    #[serde(default)]
     pub(crate) channels: HashMap<String, ChannelSettings>,
+    #[serde(default)]
     pub(crate) intros: HashMap<String, Intro>,
+    #[serde(default)]
+    pub(crate) users: HashMap<String, GuildUser>,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GuildUser {
+    pub(crate) permissions: auth::Permissions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

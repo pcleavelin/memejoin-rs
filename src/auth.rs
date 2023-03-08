@@ -1,8 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
-
 use serde::{Deserialize, Serialize};
-use serenity::prelude::TypeMapKey;
-use tracing::trace;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Discord {
@@ -22,8 +18,6 @@ pub(crate) struct DiscordSecret {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct User {
     pub(crate) auth: Discord,
-    #[serde(default)]
-    pub(crate) permissions: Permissions,
     pub(crate) name: String,
 }
 
@@ -35,6 +29,12 @@ impl Default for Permissions {
     }
 }
 
+impl Permissions {
+    pub(crate) fn can(&self, perm: Permission) -> bool {
+        self.0 & (perm as u8) > 0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Permission {
@@ -42,8 +42,8 @@ pub enum Permission {
     DownloadSounds,
 }
 
-impl Permissions {
-    pub(crate) fn can(&self, perm: Permission) -> bool {
-        self.0 & (perm as u8) > 0
+impl Permission {
+    pub(crate) fn all() -> u8 {
+        0xFF
     }
 }
