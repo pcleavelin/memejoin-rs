@@ -3,6 +3,7 @@
 #![feature(async_closure)]
 
 mod auth;
+mod media;
 mod routes;
 pub mod settings;
 
@@ -135,6 +136,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
             .route("/intros/:guild/add", get(routes::add_guild_intro))
+            .route("/intros/:guild/upload", post(routes::upload_guild_intro))
             .route("/intros/:guild", get(routes::intros))
             .route(
                 "/intros/:guild/:channel/:intro",

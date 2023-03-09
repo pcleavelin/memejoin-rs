@@ -39,7 +39,7 @@ impl Permissions {
 #[repr(u8)]
 pub enum Permission {
     None,
-    DownloadSounds,
+    UploadSounds,
 }
 
 impl Permission {

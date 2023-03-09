@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
+    body::Bytes,
     extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
@@ -13,8 +14,11 @@ use serde_json::{json, Value};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::settings::{ApiState, GuildUser, Intro, IntroIndex, UserSettings};
 use crate::{auth, settings::FileIntro};
+use crate::{
+    media,
+    settings::{ApiState, GuildUser, Intro, IntroIndex, UserSettings},
+};
 
 #[derive(Serialize)]
 pub(crate) enum IntroResponse<'a> {
@@ -71,9 +75,13 @@ pub(crate) enum Error {
     InvalidPermission,
     #[error("{0}")]
     Ytdl(#[from] std::io::Error),
+    #[error("{0}")]
+    Ffmpeg(String),
 
     #[error("ytdl terminated unsuccessfully")]
     YtdlTerminated,
+    #[error("ffmpeg terminated unsuccessfully")]
+    FfmpegTerminated,
 }
 
 impl IntoResponse for Error {
@@ -92,7 +100,8 @@ impl IntoResponse for Error {
             Self::Ytdl(error) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
             }
-            Self::YtdlTerminated => {
+            Self::Ffmpeg(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+            Self::YtdlTerminated | Self::FfmpegTerminated => {
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
             }
         }
@@ -224,9 +233,9 @@ pub(crate) async fn add_intro_to_user(
         });
 
         // TODO: don't save on every change
-        //if let Err(err) = settings.save() {
-        //    error!("Failed to save config: {err:?}");
-        //}
+        if let Err(err) = settings.save() {
+            error!("Failed to save config: {err:?}");
+        }
     }
 }
 
@@ -255,9 +264,9 @@ pub(crate) async fn remove_intro_to_user(
     }
 
     // TODO: don't save on every change
-    //if let Err(err) = settings.save() {
-    //    error!("Failed to save config: {err:?}");
-    //}
+    if let Err(err) = settings.save() {
+        error!("Failed to save config: {err:?}");
+    }
 }
 
 pub(crate) async fn intros(
@@ -294,6 +303,7 @@ pub(crate) async fn me(
             g.1.users
                 // TODO: why must clone
                 .entry(username.clone())
+                // TODO: check if owner for permissions
                 .or_insert(Default::default());
 
         let mut guild = MeGuild {
@@ -326,6 +336,52 @@ pub(crate) async fn me(
     }
 }
 
+pub(crate) async fn upload_guild_intro(
+    State(state): State<Arc<ApiState>>,
+    Path(guild): Path<u64>,
+    Query(mut params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    file: Bytes,
+) -> Result<(), Error> {
+    let mut settings = state.settings.lock().await;
+
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
+    let Some(friendly_name) = params.remove("name") else { return Err(Error::InvalidRequest); };
+
+    {
+        let Some(guild) = settings.guilds.get(&guild) else { return Err(Error::NoGuildFound); };
+        let auth_user = match settings.auth_users.get(token) {
+            Some(user) => user,
+            None => return Err(Error::NoUserFound),
+        };
+        let Some(guild_user) = guild.users.get(&auth_user.name) else { return Err(Error::NoUserFound) };
+
+        if !guild_user.permissions.can(auth::Permission::UploadSounds) {
+            return Err(Error::InvalidPermission);
+        }
+    }
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else { return Err(Error::NoGuildFound); };
+    let uuid = Uuid::new_v4().to_string();
+    let temp_path = format!("./sounds/temp/{uuid}");
+    let dest_path = format!("./sounds/{uuid}.mp3");
+
+    // Write original file so its ready for codec conversion
+    std::fs::write(&temp_path, file)?;
+    media::normalize(&temp_path, &dest_path).await?;
+    std::fs::remove_file(&temp_path)?;
+
+    guild.intros.insert(
+        uuid.clone(),
+        Intro::File(FileIntro {
+            filename: format!("{uuid}.mp3"),
+            friendly_name,
+        }),
+    );
+
+    Ok(())
+}
+
 pub(crate) async fn add_guild_intro(
     State(state): State<Arc<ApiState>>,
     Path(guild): Path<u64>,
@@ -346,7 +402,7 @@ pub(crate) async fn add_guild_intro(
         };
         let Some(guild_user) = guild.users.get(&auth_user.name) else { return Err(Error::NoUserFound) };
 
-        if !guild_user.permissions.can(auth::Permission::DownloadSounds) {
+        if !guild_user.permissions.can(auth::Permission::UploadSounds) {
             return Err(Error::InvalidPermission);
         }
     }
