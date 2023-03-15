@@ -40,6 +40,7 @@ impl Permissions {
 pub enum Permission {
     None,
     UploadSounds,
+    DeleteSounds,
 }
 
 impl Permission {

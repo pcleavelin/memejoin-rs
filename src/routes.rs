@@ -53,6 +53,9 @@ pub(crate) struct MeChannel<'a> {
     pub(crate) intros: &'a Vec<IntroIndex>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct DeleteIntroRequest(Vec<String>);
+
 pub(crate) async fn health() -> &'static str {
     "Hello!"
 }
@@ -431,6 +434,47 @@ pub(crate) async fn add_guild_intro(
             friendly_name,
         }),
     );
+
+    Ok(())
+}
+
+pub(crate) async fn delete_guild_intro(
+    State(state): State<Arc<ApiState>>,
+    Path(guild): Path<u64>,
+    headers: HeaderMap,
+    Json(body): Json<DeleteIntroRequest>,
+) -> Result<(), Error> {
+    let mut settings = state.settings.lock().await;
+    // TODO: make this an impl on HeaderMap
+    let Some(token) = headers.get("token").and_then(|v| v.to_str().ok()) else { return Err(Error::NoUserFound); };
+
+    {
+        let Some(guild) = settings.guilds.get(&guild) else { return Err(Error::NoGuildFound); };
+        let auth_user = match settings.auth_users.get(token) {
+            Some(user) => user,
+            None => return Err(Error::NoUserFound),
+        };
+        let Some(guild_user) = guild.users.get(&auth_user.name) else { return Err(Error::NoUserFound) };
+
+        if !guild_user.permissions.can(auth::Permission::DeleteSounds) {
+            return Err(Error::InvalidPermission);
+        }
+    }
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else { return Err(Error::NoGuildFound); };
+
+    // Remove intro from any users
+    for channel in guild.channels.iter_mut() {
+        for user in channel.1.users.iter_mut() {
+            user.1
+                .intros
+                .retain(|user_intro| !body.0.iter().any(|intro| &user_intro.index == intro));
+        }
+    }
+
+    for intro in &body.0 {
+        guild.intros.remove(intro);
+    }
 
     Ok(())
 }

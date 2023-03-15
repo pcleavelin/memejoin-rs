@@ -8,7 +8,7 @@ mod routes;
 pub mod settings;
 
 use axum::http::{HeaderValue, Method};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use futures::StreamExt;
 use settings::ApiState;
@@ -135,9 +135,10 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
         let api = Router::new()
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
+            .route("/intros/:guild", get(routes::intros))
             .route("/intros/:guild/add", get(routes::add_guild_intro))
             .route("/intros/:guild/upload", post(routes::upload_guild_intro))
-            .route("/intros/:guild", get(routes::intros))
+            .route("/intros/:guild/delete", delete(routes::delete_guild_intro))
             .route(
                 "/intros/:guild/:channel/:intro",
                 post(routes::add_intro_to_user),
@@ -152,7 +153,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                     // TODO: move this to env variable
                     .allow_origin([origin.parse().unwrap()])
                     .allow_headers(Any)
-                    .allow_methods([Method::GET, Method::POST]),
+                    .allow_methods([Method::GET, Method::POST, Method::DELETE]),
             )
             .with_state(Arc::new(state));
         let addr = SocketAddr::from(([0, 0, 0, 0], 8100));
