@@ -25,5 +25,5 @@ default-features = false
 features = ["client", "gateway", "rustls_backend", "model", "cache", "voice"]
 
 [dependencies.songbird]
-version = "0.3.0"
+version = "0.3.2"
 features = [ "builtin-queue", "yt-dlp" ]
