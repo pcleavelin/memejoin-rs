@@ -1,0 +1,21 @@
+steps:
+  build-docker-image:
+    image: alpine:edge
+    commands:
+      - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
+      - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
+      - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#docker
+      - cp $(nix build --extra-experimental-features nix-command --extra-experimental-features flakes --print-out-paths .#docker) ./memejoin-rs.tar.gz
+
+  publish-image:
+    when:
+      event: tag
+    image: docker
+    secrets: [ forgejo_token ]
+    commands:
+      - docker login -u ${CI_REPO_OWNER} --password $FORGEJO_TOKEN git.spacegirl.nl
+      - docker image load --input memejoin-rs.tar.gz
+      - docker image tag memejoin-rs:${CI_COMMIT_TAG} git.spacegirl.nl/${CI_REPO}:${CI_COMMIT_TAG}
+      - docker image push git.spacegirl.nl/${CI_REPO}:${CI_COMMIT_TAG}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
