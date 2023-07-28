@@ -3,7 +3,9 @@
 #![feature(async_closure)]
 
 mod auth;
+mod htmx;
 mod media;
+mod page;
 mod routes;
 pub mod settings;
 
@@ -133,6 +135,18 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
 
     tokio::spawn(async move {
         let api = Router::new()
+            .route("/", get(page::home))
+            .route("/index.html", get(page::home))
+            .route("/login", get(page::login))
+            .route("/guild/:guild_id", get(page::guild_dashboard))
+            .route(
+                "/v2/intros/add/:guild_id/:channel",
+                post(routes::v2_add_intro_to_user),
+            )
+            .route(
+                "/v2/intros/remove/:guild_id/:channel",
+                post(routes::v2_remove_intro_from_user),
+            )
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
             .route("/intros/:guild", get(routes::intros))
@@ -148,6 +162,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                 post(routes::remove_intro_to_user),
             )
             .route("/auth", get(routes::auth))
+            .route("/v2/auth", get(routes::v2_auth))
             .layer(
                 CorsLayer::new()
                     // TODO: move this to env variable
@@ -155,7 +170,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                     .allow_headers(Any)
                     .allow_methods([Method::GET, Method::POST, Method::DELETE]),
             )
-            .with_state(Arc::new(state));
+            .with_state(state);
         let addr = SocketAddr::from(([0, 0, 0, 0], 8100));
         info!("socket listening on {addr}");
         axum::Server::bind(&addr)
@@ -233,21 +248,29 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
                     info!("Got PlaySound message");
                     let settings = settings.lock().await;
 
-                    let Some(Channel::Guild(channel)) = channel_id.to_channel_cached(&ctx.cache) else {
+                    let Some(Channel::Guild(channel)) = channel_id.to_channel_cached(&ctx.cache)
+                    else {
                         error!("Failed to get cached channel from member!");
                         continue;
                     };
 
-                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64()) else {
+                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64())
+                    else {
                         error!("couldn't get guild from id: {}", channel.guild_id.as_u64());
                         continue;
                     };
                     let Some(channel_settings) = guild_settings.channels.get(channel.name()) else {
-                        error!("couldn't get channel_settings from name: {}", channel.name());
+                        error!(
+                            "couldn't get channel_settings from name: {}",
+                            channel.name()
+                        );
                         continue;
                     };
                     let Some(user) = channel_settings.users.get(&member.user.name) else {
-                        error!("couldn't get user settings from name: {}", &member.user.name);
+                        error!(
+                            "couldn't get user settings from name: {}",
+                            &member.user.name
+                        );
                         continue;
                     };
 
@@ -310,6 +333,8 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
 #[tokio::main]
 #[instrument]
 async fn main() -> std::io::Result<()> {
+    dotenv::dotenv().ok();
+
     tracing_subscriber::fmt::init();
 
     let settings = serde_json::from_str::<Settings>(
