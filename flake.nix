@@ -8,6 +8,7 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        tag = "0.1.4_3-alpha";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
@@ -45,8 +46,8 @@
 
         packages = with pkgs; flake-utils.lib.flattenTree rec {
           default = rustPlatform.buildRustPackage rec {
+            inherit tag;
             name = "memejoin-rs";
-            version = "0.1.4_2-alpha";
             src = self;
             buildInputs = [ openssl.dev ];
             nativeBuildInputs = [ local-rust pkg-config openssl openssl.dev cmake gcc libopus ];
@@ -57,8 +58,8 @@
           };
 
           docker = dockerTools.buildImage {
+            inherit tag;
             name = "memejoin-rs";
-            tag = "0.1.4_2-alpha";
             copyToRoot = buildEnv {
               name = "image-root";
               paths = [ default cacert openssl openssl.dev ffmpeg libopus youtube-dl yt-dlp ];
