@@ -54,13 +54,20 @@ fn guild_list<'a>(
 ) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Empty).ul(|b| {
         let mut b = b;
+        let mut in_any_guilds = false;
         for (guild_id, guild_settings) in guilds {
+            in_any_guilds = true;
+
             b = b.li(|b| {
                 b.link(
                     &guild_settings.name,
                     &format!("{}/guild/{}", origin, guild_id),
                 )
             });
+        }
+
+        if !in_any_guilds {
+            b = b.builder_text(Tag::Header4, "Looks like you aren't in any guilds");
         }
 
         b
