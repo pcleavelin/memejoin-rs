@@ -222,10 +222,10 @@ pub(crate) async fn v2_auth(
     // TODO: add permissions based on roles
 
     let mut cookie = Cookie::new("access_token", token.clone());
-    cookie.set_path("/");
+    cookie.set_path(format!("{}/", state.origin));
     cookie.set_secure(true);
 
-    Ok((jar.add(cookie), Redirect::to("/")))
+    Ok((jar.add(cookie), Redirect::to(&format!("{}/", state.origin))))
 }
 
 pub(crate) async fn auth(
