@@ -4,7 +4,6 @@ steps:
       event: push
     image: alpine:edge
     commands:
-      - echo ${AGENT_NIX_STORE_PATH}
       - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
       - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
       - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#docker
@@ -14,8 +13,7 @@ steps:
 
   publish-image:
     when:
-      - event: tag
-        branch: master
+      event: tag
     image: docker
     secrets: [ forgejo_token ]
     commands:
