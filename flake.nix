@@ -8,7 +8,7 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        tag = "super_test";
+        tag = "v0.1.5-alpha";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
