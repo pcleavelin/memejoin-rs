@@ -611,6 +611,77 @@ pub(crate) async fn upload_guild_intro(
     Ok(())
 }
 
+pub(crate) async fn v2_upload_guild_intro(
+    State(state): State<ApiState>,
+    Path(guild): Path<u64>,
+    user: User,
+    mut form_data: Multipart,
+) -> Result<HeaderMap, Error> {
+    let mut settings = state.settings.lock().await;
+    let mut friendly_name = None;
+    let mut file = None;
+
+    while let Ok(Some(field)) = form_data.next_field().await {
+        let Some(field_name) = field.name() else {
+            continue;
+        };
+
+        if field_name.eq_ignore_ascii_case("name") {
+            friendly_name = Some(field.text().await.map_err(|_| Error::InvalidRequest)?);
+            continue;
+        }
+
+        if field_name.eq_ignore_ascii_case("file") {
+            file = Some(field.bytes().await.map_err(|_| Error::InvalidRequest)?);
+            continue;
+        }
+    }
+
+    let Some(friendly_name) = friendly_name else {
+        return Err(Error::InvalidRequest);
+    };
+    let Some(file) = file else {
+        return Err(Error::InvalidRequest);
+    };
+
+    {
+        let Some(guild) = settings.guilds.get(&guild) else {
+            return Err(Error::NoGuildFound);
+        };
+        let Some(guild_user) = guild.users.get(&user.name) else {
+            return Err(Error::NoUserFound);
+        };
+
+        if !guild_user.permissions.can(auth::Permission::UploadSounds) {
+            return Err(Error::InvalidPermission);
+        }
+    }
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else {
+        return Err(Error::NoGuildFound);
+    };
+    let uuid = Uuid::new_v4().to_string();
+    let temp_path = format!("./sounds/temp/{uuid}");
+    let dest_path = format!("./sounds/{uuid}.mp3");
+
+    // Write original file so its ready for codec conversion
+    std::fs::write(&temp_path, file)?;
+    media::normalize(&temp_path, &dest_path).await?;
+    std::fs::remove_file(&temp_path)?;
+
+    guild.intros.insert(
+        uuid.clone(),
+        Intro::File(FileIntro {
+            filename: format!("{uuid}.mp3"),
+            friendly_name,
+        }),
+    );
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+    Ok(headers)
+}
+
 pub(crate) async fn add_guild_intro(
     State(state): State<ApiState>,
     Path(guild): Path<u64>,

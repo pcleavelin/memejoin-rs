@@ -139,6 +139,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
             .route("/index.html", get(page::home))
             .route("/login", get(page::login))
             .route("/guild/:guild_id", get(page::guild_dashboard))
+            .route("/v2/auth", get(routes::v2_auth))
             .route(
                 "/v2/intros/add/:guild_id/:channel",
                 post(routes::v2_add_intro_to_user),
@@ -146,6 +147,10 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
             .route(
                 "/v2/intros/remove/:guild_id/:channel",
                 post(routes::v2_remove_intro_from_user),
+            )
+            .route(
+                "/v2/intros/:guild/upload",
+                post(routes::v2_upload_guild_intro),
             )
             .route("/health", get(routes::health))
             .route("/me", get(routes::me))
@@ -162,7 +167,6 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                 post(routes::remove_intro_to_user),
             )
             .route("/auth", get(routes::auth))
-            .route("/v2/auth", get(routes::v2_auth))
             .layer(
                 CorsLayer::new()
                     // TODO: move this to env variable

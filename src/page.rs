@@ -111,6 +111,7 @@ pub(crate) async fn guild_dashboard(
         return Err(Redirect::to(&format!("{}/", state.origin)));
     };
 
+    let can_upload = guild_user.permissions.can(auth::Permission::UploadSounds);
     let is_moderator = guild_user.permissions.can(auth::Permission::DeleteSounds);
 
     Ok(Html(
@@ -124,7 +125,7 @@ pub(crate) async fn guild_dashboard(
                 })
             })
             .builder(Tag::Empty, |b| {
-                if is_moderator {
+                let mut b = if is_moderator {
                     b.builder(Tag::Div, |b| {
                         b.attribute("class", "container")
                             .builder(Tag::Article, |b| {
@@ -135,8 +136,20 @@ pub(crate) async fn guild_dashboard(
                     })
                 } else {
                     b
-                }
-                .builder(Tag::Div, |b| {
+                };
+                b = if can_upload {
+                    b.builder(Tag::Div, |b| {
+                        b.attribute("class", "container")
+                            .builder(Tag::Article, |b| {
+                                b.builder_text(Tag::Header, "Upload New Intro")
+                                    .push_builder(upload_form(&state.origin, guild_id))
+                            })
+                    })
+                } else {
+                    b
+                };
+
+                b.builder(Tag::Div, |b| {
                     b.attribute("class", "container")
                         .builder(Tag::Article, |b| {
                             let mut b = b.builder_text(Tag::Header, "Guild Intros");
@@ -196,6 +209,26 @@ pub(crate) async fn guild_dashboard(
             })
             .build(),
     ))
+}
+
+fn upload_form(origin: &str, guild_id: u64) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).form(|b| {
+        b.attribute("class", "container")
+            .hx_post(&format!("{}/v2/intros/{}/upload", origin, guild_id))
+            .attribute("hx-encoding", "multipart/form-data")
+            .builder(Tag::FieldSet, |b| {
+                b.attribute("class", "container")
+                    .input(|b| {
+                        b.attribute("name", "name")
+                            .attribute("placeholder", "enter intro title")
+                    })
+                    .label(|b| {
+                        b.text("Choose File")
+                            .input(|b| b.attribute("type", "file").attribute("name", "file"))
+                    })
+            })
+            .button(|b| b.attribute("type", "submit").text("Upload"))
+    })
 }
 
 fn moderator_dashboard(state: &ApiState) -> HtmxBuilder {
