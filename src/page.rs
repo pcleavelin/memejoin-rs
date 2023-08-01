@@ -1,7 +1,7 @@
 use crate::{
     auth::{self, User},
     htmx::{Build, HtmxBuilder, Tag},
-    settings::{ApiState, Intro, IntroFriendlyName},
+    settings::{ApiState, GuildSettings, Intro, IntroFriendlyName},
 };
 use axum::{
     extract::{Path, State},
@@ -22,12 +22,49 @@ fn page_header(title: &str) -> HtmxBuilder {
     })
 }
 
-pub(crate) async fn home(State(state): State<ApiState>, user: Option<User>) -> Redirect {
-    if user.is_some() {
-        Redirect::to(&format!("{}/guild/588149178912473103", state.origin))
+pub(crate) async fn home(
+    State(state): State<ApiState>,
+    user: Option<User>,
+) -> Result<Html<String>, Redirect> {
+    if let Some(user) = user {
+        let settings = state.settings.lock().await;
+
+        let guild = settings
+            .guilds
+            .iter()
+            .filter(|(_, guild_settings)| guild_settings.users.contains_key(&user.name));
+
+        Ok(Html(
+            page_header("MemeJoin - Home")
+                .builder(Tag::Div, |b| {
+                    b.attribute("class", "container")
+                        .builder_text(Tag::Header2, "Choose a Guild")
+                        .push_builder(guild_list(&state.origin, guild))
+                })
+                .build(),
+        ))
     } else {
-        Redirect::to(&format!("{}/login", state.origin))
+        Err(Redirect::to(&format!("{}/login", state.origin)))
     }
+}
+
+fn guild_list<'a>(
+    origin: &str,
+    guilds: impl Iterator<Item = (&'a u64, &'a GuildSettings)>,
+) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).ul(|b| {
+        let mut b = b;
+        for (guild_id, guild_settings) in guilds {
+            b = b.li(|b| {
+                b.link(
+                    &format!("Guild - {}", guild_settings.name),
+                    &format!("{}/guild/{}", origin, guild_id),
+                )
+            });
+        }
+
+        b
+    })
 }
 
 fn intro_list<'a>(
