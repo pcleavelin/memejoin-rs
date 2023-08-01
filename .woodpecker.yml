@@ -1,7 +1,7 @@
 steps:
   build-docker-image:
     when:
-      event: push
+      event: [push, tag]
     image: alpine:edge
     commands:
       - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
