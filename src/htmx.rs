@@ -23,6 +23,7 @@ pub enum Tag {
     Dialog,
     Article,
     Header,
+    Footer,
 
     Div,
 
@@ -51,6 +52,7 @@ pub enum Tag {
     Anchor,
     Button,
 
+    HeaderGroup,
     Header1,
     Header2,
     Header3,
@@ -85,6 +87,7 @@ impl Tag {
             Self::Dialog => "dialog",
             Self::Article => "article",
             Self::Header => "header",
+            Self::Footer => "footer",
 
             Self::Div => "div",
 
@@ -111,6 +114,7 @@ impl Tag {
             Self::Anchor => "a",
             Self::Button => "button",
 
+            Self::HeaderGroup => "hgroup",
             Self::Header1 => "h1",
             Self::Header2 => "h2",
             Self::Header3 => "h3",
