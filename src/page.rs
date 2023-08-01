@@ -139,7 +139,7 @@ pub(crate) async fn guild_dashboard(
                 .builder(Tag::Div, |b| {
                     b.attribute("class", "container")
                         .builder(Tag::Article, |b| {
-                            let mut b = b.builder_text(Tag::Header, "Guild Settings");
+                            let mut b = b.builder_text(Tag::Header, "Guild Intros");
 
                             for (channel_name, channel_settings) in &guild.channels {
                                 if let Some(channel_user) = channel_settings.users.get(&user.name) {
