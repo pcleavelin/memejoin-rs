@@ -4,13 +4,13 @@ steps:
       event: push
     image: alpine:edge
     commands:
-      - echo $AGENT_NIX_STORE_PATH
+      - echo ${AGENT_NIX_STORE_PATH}
       - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
       - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
       - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#docker
       - cp $(nix build --extra-experimental-features nix-command --extra-experimental-features flakes --print-out-paths .#docker) ./memejoin-rs.tar.gz
     volumes:
-      - ${AGENT_NIX_STORE_PATH}/store:/nix/store
+      - ${AGENT_NIX_STORE_PATH}:/nix
 
   publish-image:
     when:
@@ -25,4 +25,4 @@ steps:
       - 'docker image push git.spacegirl.nl/${CI_REPO}:${CI_COMMIT_TAG}'
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${AGENT_NIX_STORE_PATH}/store:/nix/store
+      - ${AGENT_NIX_STORE_PATH}:/nix
