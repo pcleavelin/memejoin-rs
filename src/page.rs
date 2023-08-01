@@ -57,7 +57,7 @@ fn guild_list<'a>(
         for (guild_id, guild_settings) in guilds {
             b = b.li(|b| {
                 b.link(
-                    &format!("Guild - {}", guild_settings.name),
+                    &guild_settings.name,
                     &format!("{}/guild/{}", origin, guild_id),
                 )
             });

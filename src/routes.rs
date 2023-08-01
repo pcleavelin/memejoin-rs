@@ -240,7 +240,7 @@ pub(crate) async fn auth(
 
     let mut data = HashMap::new();
 
-    let redirect_uri = format!("{}/auth", state.origin);
+    let redirect_uri = format!("{}/old/auth", state.origin);
     data.insert("client_id", state.secrets.client_id.as_str());
     data.insert("client_secret", state.secrets.client_secret.as_str());
     data.insert("grant_type", "authorization_code");
