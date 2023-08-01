@@ -129,7 +129,7 @@ pub(crate) async fn guild_dashboard(
                         b.attribute("class", "container")
                             .builder(Tag::Article, |b| {
                                 b.builder_text(Tag::Header, "Wow, you're a moderator")
-                                    .push_builder(moderator_dashboard())
+                                    .push_builder(moderator_dashboard(&state))
                                     .builder_text(Tag::Footer, "End of super cool mod section")
                             })
                     })
@@ -198,8 +198,8 @@ pub(crate) async fn guild_dashboard(
     ))
 }
 
-fn moderator_dashboard() -> HtmxBuilder {
-    HtmxBuilder::new(Tag::Empty)
+fn moderator_dashboard(state: &ApiState) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).link("Go back to old UI", &format!("{}/old", state.origin))
 }
 
 pub(crate) async fn login(State(state): State<ApiState>) -> Html<String> {
