@@ -162,29 +162,31 @@ pub(crate) async fn guild_dashboard(
                                                 None
                                             }
                                         });
-                                    b = b.builder_text(Tag::Strong, channel_name).builder(
-                                        Tag::Div,
-                                        |b| {
-                                            b.builder_text(Tag::Strong, "Your Current Intros")
-                                                .push_builder(intro_list(
-                                                    current_intros,
-                                                    "Remove Intro",
-                                                    &format!(
-                                                        "{}/v2/intros/remove/{}/{}",
-                                                        state.origin, guild_id, channel_name
-                                                    ),
-                                                ))
-                                                .builder_text(Tag::Strong, "Select Intros")
-                                                .push_builder(intro_list(
-                                                    available_intros,
-                                                    "Add Intro",
-                                                    &format!(
-                                                        "{}/v2/intros/add/{}/{}",
-                                                        state.origin, guild_id, channel_name
-                                                    ),
-                                                ))
-                                        },
-                                    );
+                                    b = b.builder(Tag::Article, |b| {
+                                        b.builder_text(Tag::Header, channel_name).builder(
+                                            Tag::Div,
+                                            |b| {
+                                                b.builder_text(Tag::Strong, "Your Current Intros")
+                                                    .push_builder(intro_list(
+                                                        current_intros,
+                                                        "Remove Intro",
+                                                        &format!(
+                                                            "{}/v2/intros/remove/{}/{}",
+                                                            state.origin, guild_id, channel_name
+                                                        ),
+                                                    ))
+                                                    .builder_text(Tag::Strong, "Select Intros")
+                                                    .push_builder(intro_list(
+                                                        available_intros,
+                                                        "Add Intro",
+                                                        &format!(
+                                                            "{}/v2/intros/add/{}/{}",
+                                                            state.origin, guild_id, channel_name
+                                                        ),
+                                                    ))
+                                            },
+                                        )
+                                    });
                                 }
                             }
 
