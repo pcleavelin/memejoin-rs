@@ -9,7 +9,7 @@ use axum::{
 };
 
 use axum_extra::extract::{cookie::Cookie, CookieJar};
-use reqwest::{Proxy, StatusCode};
+use reqwest::{Proxy, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{error, info};
@@ -221,11 +221,13 @@ pub(crate) async fn v2_auth(
     );
     // TODO: add permissions based on roles
 
+    let uri = Url::parse(&state.origin).expect("should be a valid url");
+
     let mut cookie = Cookie::new("access_token", token.clone());
-    cookie.set_path("/");
+    cookie.set_path(uri.path().to_string());
     cookie.set_secure(true);
 
-    Ok((jar.add(cookie), Redirect::to("/")))
+    Ok((jar.add(cookie), Redirect::to(&format!("{}/", state.origin))))
 }
 
 pub(crate) async fn auth(
@@ -240,7 +242,7 @@ pub(crate) async fn auth(
 
     let mut data = HashMap::new();
 
-    let redirect_uri = format!("{}/auth", state.origin);
+    let redirect_uri = format!("{}/old/auth", state.origin);
     data.insert("client_id", state.secrets.client_id.as_str());
     data.insert("client_secret", state.secrets.client_secret.as_str());
     data.insert("grant_type", "authorization_code");
