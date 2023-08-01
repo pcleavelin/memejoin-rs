@@ -145,6 +145,13 @@ pub(crate) async fn guild_dashboard(
                                     .push_builder(upload_form(&state.origin, guild_id))
                             })
                     })
+                    .builder(Tag::Div, |b| {
+                        b.attribute("class", "container")
+                            .builder(Tag::Article, |b| {
+                                b.builder_text(Tag::Header, "Upload New Intro from Url")
+                                    .push_builder(ytdl_form(&state.origin, guild_id))
+                            })
+                    })
                 } else {
                     b
                 };
@@ -225,6 +232,29 @@ fn upload_form(origin: &str, guild_id: u64) -> HtmxBuilder {
                     .label(|b| {
                         b.text("Choose File")
                             .input(|b| b.attribute("type", "file").attribute("name", "file"))
+                    })
+            })
+            .button(|b| b.attribute("type", "submit").text("Upload"))
+    })
+}
+
+fn ytdl_form(origin: &str, guild_id: u64) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).form(|b| {
+        b.attribute("class", "container")
+            .hx_get(&format!("{}/v2/intros/{}/add", origin, guild_id))
+            .builder(Tag::FieldSet, |b| {
+                b.attribute("class", "container")
+                    .label(|b| {
+                        b.text("Video Url").input(|b| {
+                            b.attribute("placeholder", "enter video url")
+                                .attribute("name", "url")
+                        })
+                    })
+                    .label(|b| {
+                        b.text("Intro Title").input(|b| {
+                            b.attribute("placeholder", "enter intro title")
+                                .attribute("name", "name")
+                        })
                     })
             })
             .button(|b| b.attribute("type", "submit").text("Upload"))

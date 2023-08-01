@@ -747,6 +747,65 @@ pub(crate) async fn add_guild_intro(
     Ok(())
 }
 
+pub(crate) async fn v2_add_guild_intro(
+    State(state): State<ApiState>,
+    Path(guild): Path<u64>,
+    Query(mut params): Query<HashMap<String, String>>,
+    user: User,
+) -> Result<HeaderMap, Error> {
+    let mut settings = state.settings.lock().await;
+    let Some(url) = params.remove("url") else {
+        return Err(Error::InvalidRequest);
+    };
+    let Some(friendly_name) = params.remove("name") else {
+        return Err(Error::InvalidRequest);
+    };
+
+    {
+        let Some(guild) = settings.guilds.get(&guild) else {
+            return Err(Error::NoGuildFound);
+        };
+        let Some(guild_user) = guild.users.get(&user.name) else {
+            return Err(Error::NoUserFound);
+        };
+
+        if !guild_user.permissions.can(auth::Permission::UploadSounds) {
+            return Err(Error::InvalidPermission);
+        }
+    }
+
+    let Some(guild) = settings.guilds.get_mut(&guild) else {
+        return Err(Error::NoGuildFound);
+    };
+
+    let uuid = Uuid::new_v4().to_string();
+    let child = tokio::process::Command::new("yt-dlp")
+        .arg(&url)
+        .args(["-o", &format!("sounds/{uuid}")])
+        .args(["-x", "--audio-format", "mp3"])
+        .spawn()
+        .map_err(Error::Ytdl)?
+        .wait()
+        .await
+        .map_err(Error::Ytdl)?;
+
+    if !child.success() {
+        return Err(Error::YtdlTerminated);
+    }
+
+    guild.intros.insert(
+        uuid.clone(),
+        Intro::File(FileIntro {
+            filename: format!("{uuid}.mp3"),
+            friendly_name,
+        }),
+    );
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+    Ok(headers)
+}
+
 pub(crate) async fn delete_guild_intro(
     State(state): State<ApiState>,
     Path(guild): Path<u64>,

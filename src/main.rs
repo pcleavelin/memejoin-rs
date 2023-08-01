@@ -148,6 +148,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                 "/v2/intros/remove/:guild_id/:channel",
                 post(routes::v2_remove_intro_from_user),
             )
+            .route("/v2/intros/:guild/add", get(routes::v2_add_guild_intro))
             .route(
                 "/v2/intros/:guild/upload",
                 post(routes::v2_upload_guild_intro),
