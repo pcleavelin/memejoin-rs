@@ -1,5 +1,6 @@
 use crate::{
     auth::{self, User},
+    db,
     htmx::{Build, HtmxBuilder, Tag},
     settings::{ApiState, GuildSettings, Intro, IntroFriendlyName},
 };
@@ -27,19 +28,20 @@ pub(crate) async fn home(
     user: Option<User>,
 ) -> Result<Html<String>, Redirect> {
     if let Some(user) = user {
-        let settings = state.settings.lock().await;
+        let db = state.db.lock().await;
 
-        let guild = settings
-            .guilds
-            .iter()
-            .filter(|(_, guild_settings)| guild_settings.users.contains_key(&user.name));
+        let user_guilds = db.get_user_guilds(&user.name).map_err(|err| {
+            error!(?err, "failed to get user guilds");
+            // TODO: change this to returning a error to the client
+            Redirect::to("/login")
+        })?;
 
         Ok(Html(
             page_header("MemeJoin - Home")
                 .builder(Tag::Div, |b| {
                     b.attribute("class", "container")
                         .builder_text(Tag::Header2, "Choose a Guild")
-                        .push_builder(guild_list(&state.origin, guild))
+                        .push_builder(guild_list(&state.origin, user_guilds.iter()))
                 })
                 .build(),
         ))
@@ -48,22 +50,14 @@ pub(crate) async fn home(
     }
 }
 
-fn guild_list<'a>(
-    origin: &str,
-    guilds: impl Iterator<Item = (&'a u64, &'a GuildSettings)>,
-) -> HtmxBuilder {
+fn guild_list<'a>(origin: &str, guilds: impl Iterator<Item = &'a db::Guild>) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Empty).ul(|b| {
         let mut b = b;
         let mut in_any_guilds = false;
-        for (guild_id, guild_settings) in guilds {
+        for guild in guilds {
             in_any_guilds = true;
 
-            b = b.li(|b| {
-                b.link(
-                    &guild_settings.name,
-                    &format!("{}/guild/{}", origin, guild_id),
-                )
-            });
+            b = b.li(|b| b.link(&guild.name, &format!("{}/guild/{}", origin, guild.id)));
         }
 
         if !in_any_guilds {

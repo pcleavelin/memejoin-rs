@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::auth;
+use crate::{auth, db::Database};
 use axum::{async_trait, extract::FromRequestParts, http::request::Parts, response::Redirect};
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ type UserToken = String;
 // TODO: make this is wrapped type so cloning isn't happening
 #[derive(Clone)]
 pub(crate) struct ApiState {
+    pub db: Arc<tokio::sync::Mutex<Database>>,
     pub settings: Arc<tokio::sync::Mutex<Settings>>,
     pub secrets: auth::DiscordSecret,
     pub origin: String,

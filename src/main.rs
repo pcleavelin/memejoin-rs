@@ -3,6 +3,7 @@
 #![feature(async_closure)]
 
 mod auth;
+mod db;
 mod htmx;
 mod media;
 mod page;
@@ -128,6 +129,9 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
     let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
     let state = ApiState {
+        db: Arc::new(tokio::sync::Mutex::new(
+            db::Database::new("db.sqlite").expect("couldn't open sqlite db"),
+        )),
         settings,
         secrets,
         origin: origin.clone(),
