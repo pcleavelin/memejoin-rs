@@ -42,19 +42,15 @@ impl Database {
         guilds
     }
 
-    pub fn get_all_user_intros(&self, username: &str, guild_id: u64) -> Result<Vec<Intro>> {
+    pub fn get_guild_intros(&self, guild_id: u64) -> Result<Vec<Intro>> {
         let mut query = self.conn.prepare(
             "
             SELECT
                 Intro.id,
-                Intro.name,
-                UI.channel_name
+                Intro.name
             FROM Intro
-            LEFT JOIN UserIntro UI ON UI.intro_id = Intro.id
             WHERE
-                UI.username = :username
-                AND UI.guild_id = :guild_id
-            ORDER BY UI.channel_name DESC, UI.intro_id;
+                Intro.guild_id = :guild_id
             ",
         )?;
 
@@ -63,7 +59,6 @@ impl Database {
         let intros = query
             .query_map(
                 &[
-                    (":username", username),
                     // :vomit:
                     (":guild_id", &guild_id.to_string()),
                 ],
@@ -71,12 +66,52 @@ impl Database {
                     Ok(Intro {
                         id: row.get(0)?,
                         name: row.get(1)?,
-                        channel_name: row.get(2)?,
                     })
                 },
             )?
             .into_iter()
             .collect::<Result<Vec<Intro>>>();
+
+        intros
+    }
+
+    pub fn get_all_user_intros(&self, guild_id: u64) -> Result<Vec<UserIntro>> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                Intro.id,
+                Intro.name,
+                UI.channel_name,
+                UI.username
+            FROM Intro
+            LEFT JOIN UserIntro UI ON UI.intro_id = Intro.id
+            WHERE
+                UI.guild_id = :guild_id
+            ORDER BY UI.username DESC, UI.channel_name DESC, UI.intro_id;
+            ",
+        )?;
+
+        // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
+        // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        let intros = query
+            .query_map(
+                &[
+                    // :vomit:
+                    (":guild_id", &guild_id.to_string()),
+                ],
+                |row| {
+                    Ok(UserIntro {
+                        intro: Intro {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                        },
+                        channel_name: row.get(2)?,
+                        username: row.get(3)?,
+                    })
+                },
+            )?
+            .into_iter()
+            .collect::<Result<Vec<UserIntro>>>();
 
         intros
     }
@@ -109,5 +144,10 @@ pub struct Guild {
 pub struct Intro {
     pub id: i32,
     pub name: String,
+}
+
+pub struct UserIntro {
+    pub intro: Intro,
     pub channel_name: String,
+    pub username: String,
 }
