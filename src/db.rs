@@ -2,6 +2,8 @@ use std::path::Path;
 
 use rusqlite::{Connection, Result};
 
+use crate::auth;
+
 pub struct Database {
     conn: Connection,
 }
@@ -17,7 +19,7 @@ impl Database {
         let mut query = self.conn.prepare(
             "
             SELECT
-                id, name, sound_delay
+                id, name, soundDelay
             FROM Guild
             LEFT JOIN UserGuild ON UserGuild.guild_id = Guild.id
             WHERE UserGuild.username = :username
@@ -39,10 +41,73 @@ impl Database {
 
         guilds
     }
+
+    pub fn get_all_user_intros(&self, username: &str, guild_id: u64) -> Result<Vec<Intro>> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                Intro.id,
+                Intro.name,
+                UI.channel_name
+            FROM Intro
+            LEFT JOIN UserIntro UI ON UI.intro_id = Intro.id
+            WHERE
+                UI.username = :username
+                AND UI.guild_id = :guild_id
+            ORDER BY UI.channel_name DESC, UI.intro_id;
+            ",
+        )?;
+
+        // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
+        // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        let intros = query
+            .query_map(
+                &[
+                    (":username", username),
+                    // :vomit:
+                    (":guild_id", &guild_id.to_string()),
+                ],
+                |row| {
+                    Ok(Intro {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        channel_name: row.get(2)?,
+                    })
+                },
+            )?
+            .into_iter()
+            .collect::<Result<Vec<Intro>>>();
+
+        intros
+    }
+
+    pub(crate) fn get_user_permissions(
+        &self,
+        username: &str,
+        guild_id: u64,
+    ) -> Result<auth::Permissions> {
+        self.conn.query_row(
+            "
+            SELECT
+                permissions
+            FROM UserPermission
+            WHERE
+                username = ?1
+            ",
+            [username],
+            |row| Ok(auth::Permissions(row.get(0)?)),
+        )
+    }
 }
 
 pub struct Guild {
     pub id: String,
     pub name: String,
     pub sound_delay: u32,
+}
+
+pub struct Intro {
+    pub id: i32,
+    pub name: String,
+    pub channel_name: String,
 }

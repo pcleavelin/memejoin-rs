@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, State},
     response::{Html, Redirect},
 };
+use iter_tools::Itertools;
 use tracing::error;
 
 fn page_header(title: &str) -> HtmxBuilder {
@@ -69,7 +70,7 @@ fn guild_list<'a>(origin: &str, guilds: impl Iterator<Item = &'a db::Guild>) -> 
 }
 
 fn intro_list<'a>(
-    intros: impl Iterator<Item = (&'a String, &'a Intro)>,
+    intros: impl Iterator<Item = &'a db::Intro>,
     label: &str,
     post: &str,
 ) -> HtmxBuilder {
@@ -84,9 +85,10 @@ fn intro_list<'a>(
                 for intro in intros {
                     b = b.builder(Tag::Label, |b| {
                         b.builder(Tag::Input, |b| {
-                            b.attribute("type", "checkbox").attribute("name", &intro.0)
+                            b.attribute("type", "checkbox")
+                                .attribute("name", &intro.id.to_string())
                         })
-                        .builder_text(Tag::Paragraph, intro.1.friendly_name())
+                        .builder_text(Tag::Paragraph, &intro.name)
                     });
                 }
 
@@ -101,19 +103,23 @@ pub(crate) async fn guild_dashboard(
     user: User,
     Path(guild_id): Path<u64>,
 ) -> Result<Html<String>, Redirect> {
-    let settings = state.settings.lock().await;
+    let db = state.db.lock().await;
 
-    let Some(guild) = settings.guilds.get(&guild_id) else {
-        error!(%guild_id, "no such guild");
-        return Err(Redirect::to(&format!("{}/", state.origin)));
-    };
-    let Some(guild_user) = guild.users.get(&user.name) else {
-        error!(%guild_id, %user.name, "no user in guild");
-        return Err(Redirect::to(&format!("{}/", state.origin)));
-    };
+    let user_intros = db
+        .get_all_user_intros(&user.name, guild_id)
+        .map_err(|err| {
+            error!(?err, user = %user.name, %guild_id, "couldn't get user's intros");
+            // TODO: change to actual error
+            Redirect::to("/login")
+        })?;
+    let user_permissions = db
+        .get_user_permissions(&user.name, guild_id)
+        .unwrap_or_default();
 
-    let can_upload = guild_user.permissions.can(auth::Permission::UploadSounds);
-    let is_moderator = guild_user.permissions.can(auth::Permission::DeleteSounds);
+    let channel_user_intros = user_intros.iter().group_by(|intro| &intro.channel_name);
+
+    let can_upload = user_permissions.can(auth::Permission::UploadSounds);
+    let is_moderator = user_permissions.can(auth::Permission::DeleteSounds);
 
     Ok(Html(
         HtmxBuilder::new(Tag::Html)
@@ -162,54 +168,73 @@ pub(crate) async fn guild_dashboard(
                         .builder(Tag::Article, |b| {
                             let mut b = b.builder_text(Tag::Header, "Guild Intros");
 
-                            for (channel_name, channel_settings) in &guild.channels {
-                                if let Some(channel_user) = channel_settings.users.get(&user.name) {
-                                    let current_intros =
-                                        channel_user.intros.iter().filter_map(|intro_index| {
-                                            Some((
-                                                &intro_index.index,
-                                                guild.intros.get(&intro_index.index)?,
-                                            ))
-                                        });
-                                    let available_intros =
-                                        guild.intros.iter().filter_map(|intro| {
-                                            if !channel_user
-                                                .intros
-                                                .iter()
-                                                .any(|intro_index| intro.0 == &intro_index.index)
-                                            {
-                                                Some((intro.0, intro.1))
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                    b = b.builder(Tag::Article, |b| {
-                                        b.builder_text(Tag::Header, channel_name).builder(
-                                            Tag::Div,
-                                            |b| {
-                                                b.builder_text(Tag::Strong, "Your Current Intros")
-                                                    .push_builder(intro_list(
-                                                        current_intros,
-                                                        "Remove Intro",
-                                                        &format!(
-                                                            "{}/v2/intros/remove/{}/{}",
-                                                            state.origin, guild_id, channel_name
-                                                        ),
-                                                    ))
-                                                    .builder_text(Tag::Strong, "Select Intros")
-                                                    .push_builder(intro_list(
-                                                        available_intros,
-                                                        "Add Intro",
-                                                        &format!(
-                                                            "{}/v2/intros/add/{}/{}",
-                                                            state.origin, guild_id, channel_name
-                                                        ),
-                                                    ))
-                                            },
-                                        )
-                                    });
-                                }
+                            for (channel_name, intros) in &channel_user_intros {
+                                b = b.builder(Tag::Article, |b| {
+                                    b.builder_text(Tag::Header, &channel_name).builder(
+                                        Tag::Div,
+                                        |b| {
+                                            b.builder_text(Tag::Strong, "Your Current Intros")
+                                                .push_builder(intro_list(
+                                                    intros,
+                                                    "Remove Intro",
+                                                    &format!(
+                                                        "{}/v2/intros/remove/{}/{}",
+                                                        state.origin, guild_id, channel_name
+                                                    ),
+                                                ))
+                                        },
+                                    )
+                                });
                             }
+
+                            // for (channel_name, channel_settings) in &guild.channels {
+                            //     if let Some(channel_user) = channel_settings.users.get(&user.name) {
+                            //         let current_intros =
+                            //             channel_user.intros.iter().filter_map(|intro_index| {
+                            //                 Some((
+                            //                     &intro_index.index,
+                            //                     guild.intros.get(&intro_index.index)?,
+                            //                 ))
+                            //             });
+                            //         let available_intros =
+                            //             guild.intros.iter().filter_map(|intro| {
+                            //                 if !channel_user
+                            //                     .intros
+                            //                     .iter()
+                            //                     .any(|intro_index| intro.0 == &intro_index.index)
+                            //                 {
+                            //                     Some((intro.0, intro.1))
+                            //                 } else {
+                            //                     None
+                            //                 }
+                            //             });
+                            //         b = b.builder(Tag::Article, |b| {
+                            //             b.builder_text(Tag::Header, channel_name).builder(
+                            //                 Tag::Div,
+                            //                 |b| {
+                            //                     b.builder_text(Tag::Strong, "Your Current Intros")
+                            //                         .push_builder(intro_list(
+                            //                             current_intros,
+                            //                             "Remove Intro",
+                            //                             &format!(
+                            //                                 "{}/v2/intros/remove/{}/{}",
+                            //                                 state.origin, guild_id, channel_name
+                            //                             ),
+                            //                         ))
+                            //                         .builder_text(Tag::Strong, "Select Intros")
+                            //                         .push_builder(intro_list(
+                            //                             available_intros,
+                            //                             "Add Intro",
+                            //                             &format!(
+                            //                                 "{}/v2/intros/add/{}/{}",
+                            //                                 state.origin, guild_id, channel_name
+                            //                             ),
+                            //                         ))
+                            //                 },
+                            //             )
+                            //         });
+                            //     }
+                            // }
 
                             b
                         })
