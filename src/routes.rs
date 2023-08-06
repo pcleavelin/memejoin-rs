@@ -364,42 +364,21 @@ pub(crate) async fn v2_add_intro_to_user(
         // TODO: change to actual error
         Redirect::to("/login")
     })?;
-    let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
-        error!(?err, %guild_id, "couldn't get user intros");
-        // TODO: change to actual error
-        Redirect::to("/login")
-    })?;
 
-    let grouped_intros = all_user_intros.iter().group_by(|intro| &intro.username);
-    let user_intros = grouped_intros
-        .into_iter()
-        .filter_map(|(username, intro)| {
-            if username == &user.name {
-                Some(intro)
-            } else {
-                None
-            }
-        })
-        .flatten();
-
-    let grouped_user_intros = user_intros.group_by(|intro| &intro.channel_name);
-    let intros = grouped_user_intros
-        .into_iter()
-        .filter_map(|(channel_name, intros)| {
-            if channel_name == &channel {
-                Some(intros.map(|intro| &intro.intro))
-            } else {
-                None
-            }
-        })
-        .flatten();
+    let intros = db
+        .get_user_channel_intros(&user.name, guild_id, &channel)
+        .map_err(|err| {
+            error!(?err, user = %user.name, %guild_id, "couldn't get user intros");
+            // TODO: change to actual error
+            Redirect::to("/login")
+        })?;
 
     Ok(Html(
         page::channel_intro_selector(
             &state.origin,
             guild_id,
             &channel,
-            intros,
+            intros.iter(),
             guild_intros.iter(),
         )
         .build(),
@@ -411,42 +390,41 @@ pub(crate) async fn v2_remove_intro_from_user(
     Path((guild_id, channel)): Path<(u64, String)>,
     user: User,
     mut form_data: Multipart,
-) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
-
-    let mut settings = state.settings.lock().await;
-
-    let Some(guild) = settings.guilds.get_mut(&guild_id) else {
-        return headers;
-    };
-    let Some(channel) = guild.channels.get_mut(&channel) else {
-        return headers;
-    };
-    let Some(channel_user) = channel.users.get_mut(&user.name) else {
-        return headers;
-    };
+) -> Result<Html<String>, Redirect> {
+    let db = state.db.lock().await;
 
     while let Ok(Some(field)) = form_data.next_field().await {
         let Some(field_name) = field.name() else {
             continue;
         };
 
-        if let Some(index) = channel_user
-            .intros
-            .iter()
-            .position(|intro| intro.index == field_name)
-        {
-            channel_user.intros.remove(index);
-        }
+        // TODO: remove from database
     }
 
-    // TODO: don't save on every change
-    if let Err(err) = settings.save() {
-        error!("Failed to save config: {err:?}");
-    }
+    let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
+        error!(?err, %guild_id, "couldn't get guild intros");
+        // TODO: change to actual error
+        Redirect::to("/login")
+    })?;
 
-    headers
+    let intros = db
+        .get_user_channel_intros(&user.name, guild_id, &channel)
+        .map_err(|err| {
+            error!(?err, user = %user.name, %guild_id, "couldn't get user intros");
+            // TODO: change to actual error
+            Redirect::to("/login")
+        })?;
+
+    Ok(Html(
+        page::channel_intro_selector(
+            &state.origin,
+            guild_id,
+            &channel,
+            intros.iter(),
+            guild_intros.iter(),
+        )
+        .build(),
+    ))
 }
 
 pub(crate) async fn add_intro_to_user(

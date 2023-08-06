@@ -120,10 +120,10 @@ pub(crate) async fn guild_dashboard(
         .get_user_permissions(&user.name, guild_id)
         .unwrap_or_default();
 
-    let grouped_intros = all_user_intros.iter().group_by(|intro| &intro.username);
-    let user_intros = grouped_intros
-        .into_iter()
-        .filter(|(username, _)| username == &&user.name);
+    let user_intros = all_user_intros
+        .iter()
+        .filter(|intro| &intro.username == &user.name)
+        .group_by(|intro| &intro.channel_name);
 
     let can_upload = user_permissions.can(auth::Permission::UploadSounds);
     let is_moderator = user_permissions.can(auth::Permission::DeleteSounds);
@@ -175,26 +175,22 @@ pub(crate) async fn guild_dashboard(
                         .builder(Tag::Article, |b| {
                             let mut b = b.builder_text(Tag::Header, "Guild Intros");
 
-                            for (_, intros) in user_intros {
-                                for (channel_name, intros) in
-                                    intros.group_by(|intro| &intro.channel_name).into_iter()
-                                {
-                                    b = b.builder(Tag::Article, |b| {
-                                        b.builder_text(Tag::Header, &channel_name).builder(
-                                            Tag::Div,
-                                            |b| {
-                                                b.attribute("id", "channel-intro-selector")
-                                                    .push_builder(channel_intro_selector(
-                                                        &state.origin,
-                                                        guild_id,
-                                                        channel_name,
-                                                        intros.map(|intro| &intro.intro),
-                                                        guild_intros.iter(),
-                                                    ))
-                                            },
-                                        )
-                                    });
-                                }
+                            for (channel_name, intros) in user_intros.into_iter() {
+                                b = b.builder(Tag::Article, |b| {
+                                    b.builder_text(Tag::Header, &channel_name).builder(
+                                        Tag::Div,
+                                        |b| {
+                                            b.attribute("id", "channel-intro-selector")
+                                                .push_builder(channel_intro_selector(
+                                                    &state.origin,
+                                                    guild_id,
+                                                    channel_name,
+                                                    intros.map(|intro| &intro.intro),
+                                                    guild_intros.iter(),
+                                                ))
+                                        },
+                                    )
+                                });
                             }
 
                             b

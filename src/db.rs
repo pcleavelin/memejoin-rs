@@ -1,6 +1,8 @@
 use std::path::Path;
 
+use iter_tools::Itertools;
 use rusqlite::{Connection, Result};
+use tracing::error;
 
 use crate::auth;
 
@@ -132,6 +134,22 @@ impl Database {
             [username],
             |row| Ok(auth::Permissions(row.get(0)?)),
         )
+    }
+
+    pub(crate) fn get_user_channel_intros(
+        &self,
+        username: &str,
+        guild_id: u64,
+        channel_name: &str,
+    ) -> Result<Vec<Intro>> {
+        let all_user_intros = self.get_all_user_intros(guild_id)?.into_iter();
+
+        let intros = all_user_intros
+            .filter(|intro| &intro.username == &username && &intro.channel_name == channel_name)
+            .map(|intro| intro.intro)
+            .collect();
+
+        Ok(intros)
     }
 }
 
