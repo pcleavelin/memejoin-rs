@@ -111,6 +111,11 @@ pub(crate) async fn guild_dashboard(
         // TODO: change to actual error
         Redirect::to("/login")
     })?;
+    let guild_channels = db.get_guild_channels(guild_id).map_err(|err| {
+        error!(?err, %guild_id, "couldn't get guild channels");
+        // TODO: change to actual error
+        Redirect::to("/login")
+    })?;
     let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
         error!(?err, %guild_id, "couldn't get user intros");
         // TODO: change to actual error
@@ -175,17 +180,27 @@ pub(crate) async fn guild_dashboard(
                         .builder(Tag::Article, |b| {
                             let mut b = b.builder_text(Tag::Header, "Guild Intros");
 
-                            for (channel_name, intros) in user_intros.into_iter() {
+                            let mut user_intros = user_intros.into_iter().peekable();
+
+                            for guild_channel_name in guild_channels {
+                                // Get user intros for this channel
+                                let intros = user_intros
+                                    .peeking_take_while(|(channel_name, _)| {
+                                        channel_name == &&guild_channel_name
+                                    })
+                                    .map(|(_, intros)| intros.map(|intro| &intro.intro))
+                                    .flatten();
+
                                 b = b.builder(Tag::Article, |b| {
-                                    b.builder_text(Tag::Header, &channel_name).builder(
+                                    b.builder_text(Tag::Header, &guild_channel_name).builder(
                                         Tag::Div,
                                         |b| {
                                             b.attribute("id", "channel-intro-selector")
                                                 .push_builder(channel_intro_selector(
                                                     &state.origin,
                                                     guild_id,
-                                                    channel_name,
-                                                    intros.map(|intro| &intro.intro),
+                                                    &guild_channel_name,
+                                                    intros,
                                                     guild_intros.iter(),
                                                 ))
                                         },

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use iter_tools::Itertools;
 use rusqlite::{Connection, Result};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::auth;
 
@@ -136,6 +136,34 @@ impl Database {
         )
     }
 
+    pub(crate) fn get_guild_channels(&self, guild_id: u64) -> Result<Vec<String>> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                Channel.name
+            FROM Channel
+            WHERE
+                Channel.guild_id = :guild_id
+            ORDER BY Channel.name DESC
+            ",
+        )?;
+
+        // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
+        // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        let intros = query
+            .query_map(
+                &[
+                    // :vomit:
+                    (":guild_id", &guild_id.to_string()),
+                ],
+                |row| Ok(row.get(0)?),
+            )?
+            .into_iter()
+            .collect::<Result<Vec<String>>>();
+
+        intros
+    }
+
     pub(crate) fn get_user_channel_intros(
         &self,
         username: &str,
@@ -150,6 +178,60 @@ impl Database {
             .collect();
 
         Ok(intros)
+    }
+
+    pub fn insert_user_intro(
+        &self,
+        username: &str,
+        guild_id: u64,
+        channel_name: &str,
+        intro_id: i32,
+    ) -> Result<()> {
+        let affected = self.conn.execute(
+            "INSERT INTO UserIntro (username, guild_id, channel_name, intro_id) VALUES (?1, ?2, ?3, ?4)",
+            &[
+                username,
+                &guild_id.to_string(),
+                channel_name,
+                &intro_id.to_string(),
+            ],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to insert user intro");
+        }
+
+        Ok(())
+    }
+
+    pub fn remove_user_intro(
+        &self,
+        username: &str,
+        guild_id: u64,
+        channel_name: &str,
+        intro_id: i32,
+    ) -> Result<()> {
+        let affected = self.conn.execute(
+            "DELETE FROM
+                UserIntro
+            WHERE 
+                username = ?1 
+            AND guild_id = ?2 
+            AND channel_name = ?3 
+            AND intro_id = ?4",
+            &[
+                username,
+                &guild_id.to_string(),
+                channel_name,
+                &intro_id.to_string(),
+            ],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to delete user intro");
+        }
+
+        Ok(())
     }
 }
 

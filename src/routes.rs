@@ -342,21 +342,22 @@ pub(crate) async fn v2_add_intro_to_user(
     let db = state.db.lock().await;
 
     while let Ok(Some(field)) = form_data.next_field().await {
-        let Some(field_name) = field.name() else {
+        let Some(intro_id) = field.name() else {
             continue;
         };
 
-        // TODO: insert into database
-        //if !channel_user
-        //    .intros
-        //    .iter()
-        //    .any(|intro| intro.index == field_name)
-        //{
-        //    channel_user.intros.push(IntroIndex {
-        //        index: field_name.to_string(),
-        //        volume: 20,
-        //    });
-        //}
+        let intro_id = intro_id.parse::<i32>().map_err(|err| {
+            error!(?err, "invalid intro id");
+            // TODO: change to actual error
+            Redirect::to("/login")
+        })?;
+
+        db.insert_user_intro(&user.name, guild_id, &channel, intro_id)
+            .map_err(|err| {
+                error!(?err, "failed to add user intro");
+                // TODO: change to actual error
+                Redirect::to("/login")
+            })?;
     }
 
     let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
@@ -394,11 +395,22 @@ pub(crate) async fn v2_remove_intro_from_user(
     let db = state.db.lock().await;
 
     while let Ok(Some(field)) = form_data.next_field().await {
-        let Some(field_name) = field.name() else {
+        let Some(intro_id) = field.name() else {
             continue;
         };
 
-        // TODO: remove from database
+        let intro_id = intro_id.parse::<i32>().map_err(|err| {
+            error!(?err, "invalid intro id");
+            // TODO: change to actual error
+            Redirect::to("/login")
+        })?;
+
+        db.remove_user_intro(&user.name, guild_id, &channel, intro_id)
+            .map_err(|err| {
+                error!(?err, "failed to remove user intro");
+                // TODO: change to actual error
+                Redirect::to("/login")
+            })?;
     }
 
     let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
