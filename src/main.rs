@@ -313,7 +313,7 @@ async fn main() -> std::io::Result<()> {
 
     let (run_api, run_bot) = (settings.run_api, settings.run_bot);
     let db = Arc::new(tokio::sync::Mutex::new(
-        db::Database::new("db.sqlite").expect("couldn't open sqlite db"),
+        db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
     ));
 
     if run_api {
