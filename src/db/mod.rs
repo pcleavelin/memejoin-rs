@@ -1,10 +1,9 @@
 use std::path::Path;
 
 use chrono::NaiveDateTime;
-use iter_tools::Itertools;
 use rusqlite::{Connection, OptionalExtension, Result};
 use serde::{Deserialize, Serialize};
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::auth;
 
@@ -23,7 +22,7 @@ impl Database {
         let mut query = self.conn.prepare(
             "
             SELECT
-                id, name, soundDelay
+                id, name, sound_delay
             FROM Guild
             ",
         )?;
@@ -92,7 +91,7 @@ impl Database {
         let mut query = self.conn.prepare(
             "
             SELECT
-                id, name, soundDelay
+                id, name, sound_delay
             FROM Guild
             LEFT JOIN UserGuild ON UserGuild.guild_id = Guild.id
             WHERE UserGuild.username = :username
@@ -120,7 +119,8 @@ impl Database {
             "
             SELECT
                 Intro.id,
-                Intro.name
+                Intro.name,
+                Intro.filename
             FROM Intro
             WHERE
                 Intro.guild_id = :guild_id
@@ -139,6 +139,7 @@ impl Database {
                     Ok(Intro {
                         id: row.get(0)?,
                         name: row.get(1)?,
+                        filename: row.get(2)?,
                     })
                 },
             )?
@@ -154,6 +155,7 @@ impl Database {
             SELECT
                 Intro.id,
                 Intro.name,
+                Intro.filename,
                 UI.channel_name,
                 UI.username
             FROM Intro
@@ -177,9 +179,10 @@ impl Database {
                         intro: Intro {
                             id: row.get(0)?,
                             name: row.get(1)?,
+                            filename: row.get(2)?,
                         },
-                        channel_name: row.get(2)?,
-                        username: row.get(3)?,
+                        channel_name: row.get(3)?,
+                        username: row.get(4)?,
                     })
                 },
             )?
@@ -252,7 +255,7 @@ impl Database {
         Ok(intros)
     }
 
-    pub fn add_user(
+    pub fn insert_user(
         &self,
         username: &str,
         api_key: &str,
@@ -276,6 +279,27 @@ impl Database {
 
         if affected < 1 {
             warn!("no rows affected when attempting to insert new user");
+        }
+
+        Ok(())
+    }
+
+    pub fn insert_intro(
+        &self,
+        name: &str,
+        volume: i32,
+        guild_id: u64,
+        filename: &str,
+    ) -> Result<()> {
+        let affected = self.conn.execute(
+            "INSERT INTO
+                Intro (name, volume, guild_id, filename)
+            VALUES (?1, ?2, ?3, ?4)",
+            &[name, &volume.to_string(), &guild_id.to_string(), filename],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to insert intro");
         }
 
         Ok(())
@@ -340,7 +364,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn remove_user_intro(
+    pub fn delete_user_intro(
         &self,
         username: &str,
         guild_id: u64,
@@ -372,7 +396,7 @@ impl Database {
 }
 
 pub struct Guild {
-    pub id: String,
+    pub id: u64,
     pub name: String,
     pub sound_delay: u32,
 }
@@ -389,6 +413,7 @@ pub struct User {
 pub struct Intro {
     pub id: i32,
     pub name: String,
+    pub filename: String,
 }
 
 pub struct UserIntro {

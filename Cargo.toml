@@ -14,7 +14,6 @@ dotenv = "0.15.0"
 futures = "0.3.26"
 iter_tools = "0.1.4"
 reqwest = "0.11.14"
-rusqlite = { version = "0.29.0", features = ["bundled", "chrono"] }
 serde = "1.0.152"
 serde_json = "1.0.93"
 thiserror = "1.0.38"
@@ -32,3 +31,9 @@ features = ["client", "gateway", "rustls_backend", "model", "cache", "voice"]
 [dependencies.songbird]
 version = "0.3.2"
 features = [ "builtin-queue", "yt-dlp" ]
+
+[target.'cfg(unix)'.dependencies]
+rusqlite = { version = "0.29.0", features = ["chrono"] }
+
+[target.'cfg(windows)'.dependencies]
+rusqlite = { version = "0.29.0", features = ["bundled", "chrono"] }

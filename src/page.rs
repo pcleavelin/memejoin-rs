@@ -2,7 +2,7 @@ use crate::{
     auth::{self},
     db::{self, User},
     htmx::{Build, HtmxBuilder, Tag},
-    settings::{ApiState, GuildSettings, Intro, IntroFriendlyName},
+    settings::ApiState,
 };
 use axum::{
     extract::{Path, State},
@@ -34,7 +34,7 @@ pub(crate) async fn home(
         let user_guilds = db.get_user_guilds(&user.name).map_err(|err| {
             error!(?err, "failed to get user guilds");
             // TODO: change this to returning a error to the client
-            Redirect::to("/login")
+            Redirect::to(&format!("{}/login", state.origin))
         })?;
 
         Ok(Html(
@@ -109,17 +109,17 @@ pub(crate) async fn guild_dashboard(
     let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
         error!(?err, %guild_id, "couldn't get guild intros");
         // TODO: change to actual error
-        Redirect::to("/login")
+        Redirect::to(&format!("{}/login", state.origin))
     })?;
     let guild_channels = db.get_guild_channels(guild_id).map_err(|err| {
         error!(?err, %guild_id, "couldn't get guild channels");
         // TODO: change to actual error
-        Redirect::to("/login")
+        Redirect::to(&format!("{}/login", state.origin))
     })?;
     let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
         error!(?err, %guild_id, "couldn't get user intros");
         // TODO: change to actual error
-        Redirect::to("/login")
+        Redirect::to(&format!("{}/login", state.origin))
     })?;
     let user_permissions = db
         .get_user_permissions(&user.name, guild_id)
