@@ -35,6 +35,7 @@
             pkg-config
             gcc
             openssl
+            sqlite
             pkg-config
             python3
             ffmpeg
@@ -50,7 +51,7 @@
             name = "memejoin-rs";
             src = self;
             buildInputs = [ openssl.dev ];
-            nativeBuildInputs = [ local-rust pkg-config openssl openssl.dev cmake gcc libopus ];
+            nativeBuildInputs = [ local-rust pkg-config openssl openssl.dev cmake gcc libopus sqlite ];
 
             cargoLock = {
               lockFile = ./Cargo.lock;
@@ -62,7 +63,7 @@
             name = "memejoin-rs";
             copyToRoot = buildEnv {
               name = "image-root";
-              paths = [ default cacert openssl openssl.dev ffmpeg libopus youtube-dl yt-dlp ];
+              paths = [ default cacert openssl openssl.dev ffmpeg libopus youtube-dl yt-dlp sqlite ];
             };
             runAsRoot = ''
               #!${runtimeShell}
