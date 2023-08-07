@@ -1,6 +1,6 @@
 use crate::{
-    auth::{self, User},
-    db,
+    auth::{self},
+    db::{self, User},
     htmx::{Build, HtmxBuilder, Tag},
     settings::{ApiState, GuildSettings, Intro, IntroFriendlyName},
 };

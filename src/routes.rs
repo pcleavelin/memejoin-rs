@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::Add, sync::Arc};
 
 use axum::{
     body::Bytes,
@@ -9,15 +9,17 @@ use axum::{
 };
 
 use axum_extra::extract::{cookie::Cookie, CookieJar};
+use chrono::{Duration, NaiveDate, Utc};
 use iter_tools::Itertools;
 use reqwest::{Proxy, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::{error, info};
+use tracing::{error, info, log::trace};
 use uuid::Uuid;
 
 use crate::{
     auth::{self, User},
+    db,
     htmx::Build,
     page,
     settings::FileIntro,
@@ -192,43 +194,53 @@ pub(crate) async fn v2_auth(
         .await
         .map_err(|err| Error::Auth(err.to_string()))?;
 
-    let mut settings = state.settings.lock().await;
+    let db = state.db.lock().await;
+
+    let guilds = db.get_guilds().map_err(Error::Database)?;
     let mut in_a_guild = false;
-    for g in settings.guilds.iter_mut() {
+    for guild in guilds {
         let Some(discord_guild) = discord_guilds
             .iter()
-            .find(|discord_guild| discord_guild.id == g.0.to_string())
+            .find(|discord_guild| discord_guild.id == guild.id)
         else {
             continue;
         };
 
         in_a_guild = true;
 
-        if !g.1.users.contains_key(&user.username) {
-            g.1.users.insert(
-                user.username.clone(),
-                GuildUser {
-                    permissions: if discord_guild.owner {
-                        auth::Permissions(auth::Permission::all())
-                    } else {
-                        Default::default()
-                    },
-                },
-            );
-        }
+        // TODO: change this
+        let guild_id = guild.id.parse::<u64>().expect("guild id should be u64");
+
+        let now = Utc::now().naive_utc();
+        db.add_user(
+            &user.username,
+            &token,
+            now + Duration::weeks(4),
+            &auth.access_token,
+            now + Duration::seconds(auth.expires_in as i64),
+        )
+        .map_err(Error::Database)?;
+
+        db.insert_user_guild(&user.username, guild_id)
+            .map_err(Error::Database)?;
+
+        // TODO: Don't reset permissions
+        db.insert_user_permission(
+            &user.username,
+            guild_id,
+            if discord_guild.owner {
+                auth::Permissions(auth::Permission::all())
+            } else {
+                Default::default()
+            },
+        )
+        .map_err(Error::Database)?;
     }
 
     if !in_a_guild {
         return Err(Error::NoGuildFound);
     }
 
-    settings.auth_users.insert(
-        token.clone(),
-        auth::User {
-            auth,
-            name: user.username.clone(),
-        },
-    );
     // TODO: add permissions based on roles
 
     let uri = Url::parse(&state.origin).expect("should be a valid url");
@@ -336,7 +348,7 @@ pub(crate) async fn auth(
 pub(crate) async fn v2_add_intro_to_user(
     State(state): State<ApiState>,
     Path((guild_id, channel)): Path<(u64, String)>,
-    user: User,
+    user: db::User,
     mut form_data: Multipart,
 ) -> Result<Html<String>, Redirect> {
     let db = state.db.lock().await;
@@ -389,7 +401,7 @@ pub(crate) async fn v2_add_intro_to_user(
 pub(crate) async fn v2_remove_intro_from_user(
     State(state): State<ApiState>,
     Path((guild_id, channel)): Path<(u64, String)>,
-    user: User,
+    user: db::User,
     mut form_data: Multipart,
 ) -> Result<Html<String>, Redirect> {
     let db = state.db.lock().await;
@@ -641,7 +653,7 @@ pub(crate) async fn upload_guild_intro(
 pub(crate) async fn v2_upload_guild_intro(
     State(state): State<ApiState>,
     Path(guild): Path<u64>,
-    user: User,
+    user: db::User,
     mut form_data: Multipart,
 ) -> Result<HeaderMap, Error> {
     let mut settings = state.settings.lock().await;
@@ -778,7 +790,7 @@ pub(crate) async fn v2_add_guild_intro(
     State(state): State<ApiState>,
     Path(guild): Path<u64>,
     Query(mut params): Query<HashMap<String, String>>,
-    user: User,
+    user: db::User,
 ) -> Result<HeaderMap, Error> {
     let mut settings = state.settings.lock().await;
     let Some(url) = params.remove("url") else {

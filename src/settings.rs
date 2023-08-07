@@ -1,11 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{auth, db::Database};
+use crate::{
+    auth,
+    db::{self, Database},
+};
 use axum::{async_trait, extract::FromRequestParts, http::request::Parts, response::Redirect};
 use axum_extra::extract::CookieJar;
 use serde::{Deserialize, Serialize};
 use serenity::prelude::TypeMapKey;
-use tracing::trace;
+use tracing::{error, trace};
 use uuid::Uuid;
 
 type UserToken = String;
@@ -20,7 +23,7 @@ pub(crate) struct ApiState {
 }
 
 #[async_trait]
-impl FromRequestParts<ApiState> for crate::auth::User {
+impl FromRequestParts<ApiState> for db::User {
     type Rejection = Redirect;
 
     async fn from_request_parts(
@@ -30,10 +33,14 @@ impl FromRequestParts<ApiState> for crate::auth::User {
         let jar = CookieJar::from_headers(&headers);
 
         if let Some(token) = jar.get("access_token") {
-            match state.settings.lock().await.auth_users.get(token.value()) {
+            match state.db.lock().await.get_user_from_api_key(token.value()) {
                 // :vomit:
-                Some(user) => Ok(user.clone()),
-                None => Err(Redirect::to("/login")),
+                Ok(user) => Ok(user),
+                Err(err) => {
+                    error!(?err, "failed to authenticate user");
+
+                    Err(Redirect::to("/login"))
+                }
             }
         } else {
             Err(Redirect::to("/login"))
