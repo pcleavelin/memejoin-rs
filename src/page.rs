@@ -1,12 +1,14 @@
 use crate::{
-    auth::{self, User},
+    auth::{self},
+    db::{self, User},
     htmx::{Build, HtmxBuilder, Tag},
-    settings::{ApiState, GuildSettings, Intro, IntroFriendlyName},
+    settings::ApiState,
 };
 use axum::{
     extract::{Path, State},
     response::{Html, Redirect},
 };
+use iter_tools::Itertools;
 use tracing::error;
 
 fn page_header(title: &str) -> HtmxBuilder {
@@ -27,19 +29,20 @@ pub(crate) async fn home(
     user: Option<User>,
 ) -> Result<Html<String>, Redirect> {
     if let Some(user) = user {
-        let settings = state.settings.lock().await;
+        let db = state.db.lock().await;
 
-        let guild = settings
-            .guilds
-            .iter()
-            .filter(|(_, guild_settings)| guild_settings.users.contains_key(&user.name));
+        let user_guilds = db.get_user_guilds(&user.name).map_err(|err| {
+            error!(?err, "failed to get user guilds");
+            // TODO: change this to returning a error to the client
+            Redirect::to(&format!("{}/login", state.origin))
+        })?;
 
         Ok(Html(
             page_header("MemeJoin - Home")
                 .builder(Tag::Div, |b| {
                     b.attribute("class", "container")
                         .builder_text(Tag::Header2, "Choose a Guild")
-                        .push_builder(guild_list(&state.origin, guild))
+                        .push_builder(guild_list(&state.origin, user_guilds.iter()))
                 })
                 .build(),
         ))
@@ -48,22 +51,14 @@ pub(crate) async fn home(
     }
 }
 
-fn guild_list<'a>(
-    origin: &str,
-    guilds: impl Iterator<Item = (&'a u64, &'a GuildSettings)>,
-) -> HtmxBuilder {
+fn guild_list<'a>(origin: &str, guilds: impl Iterator<Item = &'a db::Guild>) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Empty).ul(|b| {
         let mut b = b;
         let mut in_any_guilds = false;
-        for (guild_id, guild_settings) in guilds {
+        for guild in guilds {
             in_any_guilds = true;
 
-            b = b.li(|b| {
-                b.link(
-                    &guild_settings.name,
-                    &format!("{}/guild/{}", origin, guild_id),
-                )
-            });
+            b = b.li(|b| b.link(&guild.name, &format!("{}/guild/{}", origin, guild.id)));
         }
 
         if !in_any_guilds {
@@ -75,13 +70,14 @@ fn guild_list<'a>(
 }
 
 fn intro_list<'a>(
-    intros: impl Iterator<Item = (&'a String, &'a Intro)>,
+    intros: impl Iterator<Item = &'a db::Intro>,
     label: &str,
     post: &str,
 ) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Empty).form(|b| {
         b.attribute("class", "container")
             .hx_post(post)
+            .hx_target("closest #channel-intro-selector")
             .attribute("hx-encoding", "multipart/form-data")
             .builder(Tag::FieldSet, |b| {
                 let mut b = b
@@ -90,9 +86,10 @@ fn intro_list<'a>(
                 for intro in intros {
                     b = b.builder(Tag::Label, |b| {
                         b.builder(Tag::Input, |b| {
-                            b.attribute("type", "checkbox").attribute("name", &intro.0)
+                            b.attribute("type", "checkbox")
+                                .attribute("name", &intro.id.to_string())
                         })
-                        .builder_text(Tag::Paragraph, intro.1.friendly_name())
+                        .builder_text(Tag::Paragraph, &intro.name)
                     });
                 }
 
@@ -107,19 +104,34 @@ pub(crate) async fn guild_dashboard(
     user: User,
     Path(guild_id): Path<u64>,
 ) -> Result<Html<String>, Redirect> {
-    let settings = state.settings.lock().await;
+    let db = state.db.lock().await;
 
-    let Some(guild) = settings.guilds.get(&guild_id) else {
-        error!(%guild_id, "no such guild");
-        return Err(Redirect::to(&format!("{}/", state.origin)));
-    };
-    let Some(guild_user) = guild.users.get(&user.name) else {
-        error!(%guild_id, %user.name, "no user in guild");
-        return Err(Redirect::to(&format!("{}/", state.origin)));
-    };
+    let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
+        error!(?err, %guild_id, "couldn't get guild intros");
+        // TODO: change to actual error
+        Redirect::to(&format!("{}/login", state.origin))
+    })?;
+    let guild_channels = db.get_guild_channels(guild_id).map_err(|err| {
+        error!(?err, %guild_id, "couldn't get guild channels");
+        // TODO: change to actual error
+        Redirect::to(&format!("{}/login", state.origin))
+    })?;
+    let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
+        error!(?err, %guild_id, "couldn't get user intros");
+        // TODO: change to actual error
+        Redirect::to(&format!("{}/login", state.origin))
+    })?;
+    let user_permissions = db
+        .get_user_permissions(&user.name, guild_id)
+        .unwrap_or_default();
 
-    let can_upload = guild_user.permissions.can(auth::Permission::UploadSounds);
-    let is_moderator = guild_user.permissions.can(auth::Permission::DeleteSounds);
+    let user_intros = all_user_intros
+        .iter()
+        .filter(|intro| &intro.username == &user.name)
+        .group_by(|intro| &intro.channel_name);
+
+    let can_upload = user_permissions.can(auth::Permission::UploadSounds);
+    let is_moderator = user_permissions.can(auth::Permission::DeleteSounds);
 
     Ok(Html(
         HtmxBuilder::new(Tag::Html)
@@ -168,53 +180,32 @@ pub(crate) async fn guild_dashboard(
                         .builder(Tag::Article, |b| {
                             let mut b = b.builder_text(Tag::Header, "Guild Intros");
 
-                            for (channel_name, channel_settings) in &guild.channels {
-                                if let Some(channel_user) = channel_settings.users.get(&user.name) {
-                                    let current_intros =
-                                        channel_user.intros.iter().filter_map(|intro_index| {
-                                            Some((
-                                                &intro_index.index,
-                                                guild.intros.get(&intro_index.index)?,
-                                            ))
-                                        });
-                                    let available_intros =
-                                        guild.intros.iter().filter_map(|intro| {
-                                            if !channel_user
-                                                .intros
-                                                .iter()
-                                                .any(|intro_index| intro.0 == &intro_index.index)
-                                            {
-                                                Some((intro.0, intro.1))
-                                            } else {
-                                                None
-                                            }
-                                        });
-                                    b = b.builder(Tag::Article, |b| {
-                                        b.builder_text(Tag::Header, channel_name).builder(
-                                            Tag::Div,
-                                            |b| {
-                                                b.builder_text(Tag::Strong, "Your Current Intros")
-                                                    .push_builder(intro_list(
-                                                        current_intros,
-                                                        "Remove Intro",
-                                                        &format!(
-                                                            "{}/v2/intros/remove/{}/{}",
-                                                            state.origin, guild_id, channel_name
-                                                        ),
-                                                    ))
-                                                    .builder_text(Tag::Strong, "Select Intros")
-                                                    .push_builder(intro_list(
-                                                        available_intros,
-                                                        "Add Intro",
-                                                        &format!(
-                                                            "{}/v2/intros/add/{}/{}",
-                                                            state.origin, guild_id, channel_name
-                                                        ),
-                                                    ))
-                                            },
-                                        )
-                                    });
-                                }
+                            let mut user_intros = user_intros.into_iter().peekable();
+
+                            for guild_channel_name in guild_channels {
+                                // Get user intros for this channel
+                                let intros = user_intros
+                                    .peeking_take_while(|(channel_name, _)| {
+                                        channel_name == &&guild_channel_name
+                                    })
+                                    .map(|(_, intros)| intros.map(|intro| &intro.intro))
+                                    .flatten();
+
+                                b = b.builder(Tag::Article, |b| {
+                                    b.builder_text(Tag::Header, &guild_channel_name).builder(
+                                        Tag::Div,
+                                        |b| {
+                                            b.attribute("id", "channel-intro-selector")
+                                                .push_builder(channel_intro_selector(
+                                                    &state.origin,
+                                                    guild_id,
+                                                    &guild_channel_name,
+                                                    intros,
+                                                    guild_intros.iter(),
+                                                ))
+                                        },
+                                    )
+                                });
                             }
 
                             b
@@ -223,6 +214,28 @@ pub(crate) async fn guild_dashboard(
             })
             .build(),
     ))
+}
+
+pub fn channel_intro_selector<'a>(
+    origin: &str,
+    guild_id: u64,
+    channel_name: &String,
+    intros: impl Iterator<Item = &'a db::Intro>,
+    guild_intros: impl Iterator<Item = &'a db::Intro>,
+) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty)
+        .builder_text(Tag::Strong, "Your Current Intros")
+        .push_builder(intro_list(
+            intros,
+            "Remove Intro",
+            &format!("{}/v2/intros/remove/{}/{}", origin, guild_id, &channel_name),
+        ))
+        .builder_text(Tag::Strong, "Select Intros")
+        .push_builder(intro_list(
+            guild_intros,
+            "Add Intro",
+            &format!("{}/v2/intros/add/{}/{}", origin, guild_id, channel_name),
+        ))
 }
 
 fn upload_form(origin: &str, guild_id: u64) -> HtmxBuilder {

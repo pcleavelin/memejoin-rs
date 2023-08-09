@@ -3,26 +3,23 @@
 #![feature(async_closure)]
 
 mod auth;
+mod db;
 mod htmx;
 mod media;
 mod page;
 mod routes;
 pub mod settings;
 
-use axum::http::{HeaderValue, Method};
-use axum::routing::{delete, get, post};
+use axum::http::Method;
+use axum::routing::{get, post};
 use axum::Router;
-use futures::StreamExt;
 use settings::ApiState;
-use songbird::tracks::TrackQueue;
-use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 
-use serde::Deserialize;
 use serenity::async_trait;
 use serenity::model::prelude::{Channel, ChannelId, GuildId, Member, Ready};
 use serenity::model::voice::VoiceState;
@@ -31,7 +28,7 @@ use serenity::prelude::*;
 use songbird::SerenityInit;
 use tracing::*;
 
-use crate::settings::{Intro, Settings};
+use crate::settings::Settings;
 
 enum HandlerMessage {
     Ready(Context),
@@ -119,7 +116,7 @@ impl EventHandler for Handler {
     }
 }
 
-fn spawn_api(settings: Arc<Mutex<Settings>>) {
+fn spawn_api(db: Arc<tokio::sync::Mutex<db::Database>>) {
     let secrets = auth::DiscordSecret {
         client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
         client_secret: env::var("DISCORD_CLIENT_SECRET")
@@ -128,7 +125,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
     let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
     let state = ApiState {
-        settings,
+        db,
         secrets,
         origin: origin.clone(),
     };
@@ -154,23 +151,8 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
                 post(routes::v2_upload_guild_intro),
             )
             .route("/health", get(routes::health))
-            .route("/me", get(routes::me))
-            .route("/intros/:guild", get(routes::intros))
-            .route("/intros/:guild/add", get(routes::add_guild_intro))
-            .route("/intros/:guild/upload", post(routes::upload_guild_intro))
-            .route("/intros/:guild/delete", delete(routes::delete_guild_intro))
-            .route(
-                "/intros/:guild/:channel/:intro",
-                post(routes::add_intro_to_user),
-            )
-            .route(
-                "/intros/:guild/:channel/:intro/remove",
-                post(routes::remove_intro_to_user),
-            )
-            .route("/auth", get(routes::auth))
             .layer(
                 CorsLayer::new()
-                    // TODO: move this to env variable
                     .allow_origin([origin.parse().unwrap()])
                     .allow_headers(Any)
                     .allow_methods([Method::GET, Method::POST, Method::DELETE]),
@@ -185,7 +167,7 @@ fn spawn_api(settings: Arc<Mutex<Settings>>) {
     });
 }
 
-async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
+async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
     let token = env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var");
     let songbird = songbird::Songbird::serenity();
 
@@ -215,12 +197,19 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
             match msg {
                 HandlerMessage::Ready(ctx) => {
                     info!("Got Ready message");
-                    let settings = settings.lock().await;
 
                     let songbird = songbird::get(&ctx).await.expect("no songbird instance");
 
-                    for guild_id in settings.guilds.keys() {
-                        let handler_lock = songbird.get_or_insert(GuildId(*guild_id));
+                    let guilds = match db.lock().await.get_guilds() {
+                        Ok(guilds) => guilds,
+                        Err(err) => {
+                            error!(?err, "failed to get guild on bot ready");
+                            continue;
+                        }
+                    };
+
+                    for guild in guilds {
+                        let handler_lock = songbird.get_or_insert(GuildId(guild.id));
 
                         let mut handler = handler_lock.lock().await;
 
@@ -228,7 +217,7 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
                             songbird::Event::Track(songbird::TrackEvent::End),
                             TrackEventHandler {
                                 tx: tx.clone(),
-                                guild_id: GuildId(*guild_id),
+                                guild_id: GuildId(guild.id),
                             },
                         );
                     }
@@ -251,7 +240,6 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
 
                 HandlerMessage::PlaySound(ctx, member, channel_id) => {
                     info!("Got PlaySound message");
-                    let settings = settings.lock().await;
 
                     let Some(Channel::Guild(channel)) = channel_id.to_channel_cached(&ctx.cache)
                     else {
@@ -259,60 +247,35 @@ async fn spawn_bot(settings: Arc<Mutex<Settings>>) {
                         continue;
                     };
 
-                    let Some(guild_settings) = settings.guilds.get(channel.guild_id.as_u64())
-                    else {
-                        error!("couldn't get guild from id: {}", channel.guild_id.as_u64());
-                        continue;
-                    };
-                    let Some(channel_settings) = guild_settings.channels.get(channel.name()) else {
-                        error!(
-                            "couldn't get channel_settings from name: {}",
-                            channel.name()
-                        );
-                        continue;
-                    };
-                    let Some(user) = channel_settings.users.get(&member.user.name) else {
-                        error!(
-                            "couldn't get user settings from name: {}",
-                            &member.user.name
-                        );
-                        continue;
+                    let intros = match db.lock().await.get_user_channel_intros(
+                        &member.user.name,
+                        channel.guild_id.0,
+                        channel.name(),
+                    ) {
+                        Ok(intros) => intros,
+                        Err(err) => {
+                            error!(
+                                ?err,
+                                "failed to get user channel intros when playing sound through bot"
+                            );
+                            continue;
+                        }
                     };
 
                     // TODO: randomly choose a intro to play
-                    let Some(intro) = user.intros.first() else {
+                    let Some(intro) = intros.first() else {
                         error!("couldn't get user intro, none exist");
                         continue;
                     };
 
-                    let source = match guild_settings.intros.get(&intro.index) {
-                        Some(Intro::Online(intro)) => match songbird::ytdl(&intro.url).await {
-                            Ok(source) => source,
-                            Err(err) => {
-                                error!("Error starting youtube source from {}: {err:?}", intro.url);
-                                continue;
-                            }
-                        },
-                        Some(Intro::File(intro)) => {
-                            match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await {
-                                Ok(source) => source,
-                                Err(err) => {
-                                    error!(
-                                        "Error starting file source from {}: {err:?}",
-                                        intro.filename
-                                    );
-                                    continue;
-                                }
-                            }
-                        }
-                        None => {
+                    let source = match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await
+                    {
+                        Ok(source) => source,
+                        Err(err) => {
                             error!(
-                                "Failed to find intro for user {} on guild {} in channel {}, IntroIndex: {}",
-                                member.user.name,
-                                channel.guild_id.as_u64(),
-                                channel.name(),
-                                intro.index
-                                );
+                                "Error starting file source from {}: {err:?}",
+                                intro.filename
+                            );
                             continue;
                         }
                     };
@@ -346,23 +309,23 @@ async fn main() -> std::io::Result<()> {
         &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
     )
     .expect("error parsing settings file");
-
-    let (run_api, run_bot) = (settings.run_api, settings.run_bot);
-
     info!("{settings:?}");
 
-    let settings = Arc::new(Mutex::new(settings));
+    let (run_api, run_bot) = (settings.run_api, settings.run_bot);
+    let db = Arc::new(tokio::sync::Mutex::new(
+        db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
+    ));
+
     if run_api {
-        spawn_api(settings.clone());
+        spawn_api(db.clone());
     }
     if run_bot {
-        spawn_bot(settings.clone()).await;
+        spawn_bot(db).await;
     }
 
     info!("spawned background tasks");
 
     let _ = tokio::signal::ctrl_c().await;
-    settings.lock().await.save()?;
     info!("Received Ctrl-C, shuttdown down.");
 
     Ok(())
