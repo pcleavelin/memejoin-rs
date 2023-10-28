@@ -18,6 +18,25 @@ impl Database {
         })
     }
 
+    pub(crate) fn get_guild_users(&self, guild_id: u64) -> Result<Vec<String>> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                username
+            FROM UserGuild
+            WHERE guild_id = :guild_id
+            ",
+        )?;
+
+        // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
+        // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        let users = query
+            .query_map(&[(":guild_id", &guild_id.to_string())], |row| row.get(0))?
+            .collect::<Result<Vec<String>>>()?;
+
+        Ok(users)
+    }
+
     pub(crate) fn get_guilds(&self) -> Result<Vec<Guild>> {
         let mut query = self.conn.prepare(
             "
@@ -190,6 +209,34 @@ impl Database {
             .collect::<Result<Vec<UserIntro>>>();
 
         intros
+    }
+
+    pub(crate) fn get_all_user_permissions(
+        &self,
+        guild_id: u64,
+    ) -> Result<Vec<(String, auth::Permissions)>> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                username,
+                permissions
+            FROM UserPermission
+            WHERE
+                guild_id = :guild_id
+            ",
+        )?;
+
+        let permissions = query
+            .query_map(
+                &[
+                    // :vomit:
+                    (":guild_id", &guild_id.to_string()),
+                ],
+                |row| Ok((row.get(0)?, auth::Permissions(row.get(1)?))),
+            )?
+            .collect::<Result<Vec<(String, auth::Permissions)>>>()?;
+
+        Ok(permissions)
     }
 
     pub(crate) fn get_user_permissions(

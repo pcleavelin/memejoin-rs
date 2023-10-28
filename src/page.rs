@@ -104,34 +104,44 @@ pub(crate) async fn guild_dashboard(
     user: User,
     Path(guild_id): Path<u64>,
 ) -> Result<Html<String>, Redirect> {
-    let db = state.db.lock().await;
+    let (guild_intros, guild_channels, all_user_intros, user_permissions) = {
+        let db = state.db.lock().await;
 
-    let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
-        error!(?err, %guild_id, "couldn't get guild intros");
-        // TODO: change to actual error
-        Redirect::to(&format!("{}/login", state.origin))
-    })?;
-    let guild_channels = db.get_guild_channels(guild_id).map_err(|err| {
-        error!(?err, %guild_id, "couldn't get guild channels");
-        // TODO: change to actual error
-        Redirect::to(&format!("{}/login", state.origin))
-    })?;
-    let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
-        error!(?err, %guild_id, "couldn't get user intros");
-        // TODO: change to actual error
-        Redirect::to(&format!("{}/login", state.origin))
-    })?;
-    let user_permissions = db
-        .get_user_permissions(&user.name, guild_id)
-        .unwrap_or_default();
+        let guild_intros = db.get_guild_intros(guild_id).map_err(|err| {
+            error!(?err, %guild_id, "couldn't get guild intros");
+            // TODO: change to actual error
+            Redirect::to(&format!("{}/login", state.origin))
+        })?;
+        let guild_channels = db.get_guild_channels(guild_id).map_err(|err| {
+            error!(?err, %guild_id, "couldn't get guild channels");
+            // TODO: change to actual error
+            Redirect::to(&format!("{}/login", state.origin))
+        })?;
+        let all_user_intros = db.get_all_user_intros(guild_id).map_err(|err| {
+            error!(?err, %guild_id, "couldn't get user intros");
+            // TODO: change to actual error
+            Redirect::to(&format!("{}/login", state.origin))
+        })?;
+        let user_permissions = db
+            .get_user_permissions(&user.name, guild_id)
+            .unwrap_or_default();
+
+        (
+            guild_intros,
+            guild_channels,
+            all_user_intros,
+            user_permissions,
+        )
+    };
+
+    let can_upload = user_permissions.can(auth::Permission::UploadSounds);
+    let is_moderator = user_permissions.can(auth::Permission::Moderator);
+    let mod_dashboard = moderator_dashboard(&state, guild_id).await;
 
     let user_intros = all_user_intros
         .iter()
-        .filter(|intro| &intro.username == &user.name)
+        .filter(|intro| intro.username == user.name)
         .group_by(|intro| &intro.channel_name);
-
-    let can_upload = user_permissions.can(auth::Permission::UploadSounds);
-    let is_moderator = user_permissions.can(auth::Permission::DeleteSounds);
 
     Ok(Html(
         HtmxBuilder::new(Tag::Html)
@@ -149,7 +159,7 @@ pub(crate) async fn guild_dashboard(
                         b.attribute("class", "container")
                             .builder(Tag::Article, |b| {
                                 b.builder_text(Tag::Header, "Wow, you're a moderator")
-                                    .push_builder(moderator_dashboard(&state))
+                                    .push_builder(mod_dashboard)
                                     .builder_text(Tag::Footer, "End of super cool mod section")
                             })
                     })
@@ -281,17 +291,98 @@ fn ytdl_form(origin: &str, guild_id: u64) -> HtmxBuilder {
     })
 }
 
-fn moderator_dashboard(state: &ApiState) -> HtmxBuilder {
-    HtmxBuilder::new(Tag::Empty).link("Go back to old UI", &format!("{}/old", state.origin))
+async fn permissions_editor(state: &ApiState, guild_id: u64) -> HtmxBuilder {
+    let db = state.db.lock().await;
+    let user_permissions = db.get_all_user_permissions(guild_id).unwrap_or_default();
+
+    HtmxBuilder::new(Tag::Empty).form(|b| {
+        b.hx_post(&format!(
+            "{}/guild/{}/permissions/update",
+            state.origin, guild_id
+        ))
+        .attribute("hx-encoding", "multipart/form-data")
+        .builder(Tag::Table, |b| {
+            let mut b = b.attribute("role", "grid").builder(Tag::TableHead, |b| {
+                let mut b = b.builder_text(Tag::TableHeader, "User");
+
+                for perm in enum_iterator::all::<auth::Permission>() {
+                    if perm == auth::Permission::Moderator || perm == auth::Permission::None {
+                        continue;
+                    }
+
+                    b = b.builder_text(Tag::TableHeader, &perm.to_string());
+                }
+
+                b
+            });
+
+            for permission in user_permissions {
+                b = b.builder(Tag::TableRow, |b| {
+                    let mut b = b.builder_text(Tag::TableData, permission.0.as_str());
+
+                    for perm in enum_iterator::all::<auth::Permission>() {
+                        if perm == auth::Permission::Moderator || perm == auth::Permission::None {
+                            continue;
+                        }
+
+                        b = b.builder(Tag::TableData, |b| {
+                            b.builder(Tag::Input, |b| {
+                                let mut b = b.attribute("type", "checkbox").attribute(
+                                    "name",
+                                    &format!("{}#{}", permission.0, perm.to_string()),
+                                );
+
+                                if permission.1.can(auth::Permission::Moderator) {
+                                    b = b.flag("disabled");
+                                }
+
+                                if permission.1.can(perm) {
+                                    return b.flag("checked");
+                                }
+
+                                b
+                            })
+                        });
+                    }
+
+                    b
+                });
+            }
+
+            b
+        })
+        .button(|b| b.attribute("type", "submit").text("Update Permissions"))
+    })
 }
 
-pub(crate) async fn login(State(state): State<ApiState>) -> Html<String> {
-    let authorize_uri = format!("https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}/v2/auth&response_type=code&scope=guilds.members.read%20guilds%20identify", state.secrets.client_id, state.origin);
+async fn moderator_dashboard(state: &ApiState, guild_id: u64) -> HtmxBuilder {
+    let permissions_editor = permissions_editor(state, guild_id).await;
+    HtmxBuilder::new(Tag::Empty).push_builder(permissions_editor)
+}
 
-    Html(
-        HtmxBuilder::new(Tag::Html)
-            .push_builder(page_header("MemeJoin - Login"))
-            .link("Login", &authorize_uri)
-            .build(),
-    )
+pub(crate) async fn login(
+    State(state): State<ApiState>,
+    user: Option<User>,
+) -> Result<Html<String>, Redirect> {
+    if user.is_some() {
+        Err(Redirect::to(&format!("{}/", state.origin)))
+    } else {
+        let authorize_uri = format!("https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}/v2/auth&response_type=code&scope=guilds.members.read%20guilds%20identify", state.secrets.client_id, state.origin);
+
+        Ok(Html(
+            page_header("MemeJoin - Login")
+                .builder(Tag::Main, |b| {
+                    b.attribute("class", "container")
+                        .link("Login with Discord", &authorize_uri)
+                })
+                .build(),
+        ))
+    }
+
+    //Html(
+    //    HtmxBuilder::new(Tag::Html)
+    //        .push_builder(page_header("MemeJoin - Login"))
+    //        .link("Login", &authorize_uri)
+    //        .build(),
+    //)
 }

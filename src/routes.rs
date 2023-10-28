@@ -10,6 +10,7 @@ use axum_extra::extract::{cookie::Cookie, CookieJar};
 use chrono::{Duration, Utc};
 use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Deserializer};
+use std::str::FromStr;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -436,6 +437,66 @@ pub(crate) async fn v2_add_guild_intro(
 
     db.insert_intro(&name, 0, guild_id, &format!("{uuid}.mp3"))
         .map_err(Error::Database)?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+
+    Ok(headers)
+}
+
+pub(crate) async fn update_guild_permissions(
+    State(state): State<ApiState>,
+    Path(guild_id): Path<u64>,
+    user: db::User,
+    mut form_data: Multipart,
+) -> Result<HeaderMap, Error> {
+    let db = state.db.lock().await;
+
+    let this_user_permissions = db
+        .get_user_permissions(&user.name, guild_id)
+        .unwrap_or_default();
+
+    if !this_user_permissions.can(auth::Permission::Moderator) {
+        return Err(Error::InvalidPermission);
+    }
+
+    let mut users_to_update: HashMap<String, auth::Permissions> = db
+        .get_guild_users(guild_id)?
+        .into_iter()
+        .map(|user| (user, Default::default()))
+        .collect();
+
+    while let Ok(Some(field)) = form_data.next_field().await {
+        let Some(field_name) = field.name() else {
+            continue;
+        };
+
+        if let Some((username, permission)) = field_name.split_once('#') {
+            let permission = auth::Permission::from_str(permission)?;
+
+            let username = username.to_string();
+            if field.text().await.map_err(|_| Error::InvalidRequest)? == "on" {
+                users_to_update
+                    .entry(username)
+                    .and_modify(|value| {
+                        value.add(permission);
+                    })
+                    .or_insert_with(|| {
+                        let mut perm = auth::Permissions::default();
+                        perm.add(permission);
+                        perm
+                    });
+            }
+        }
+    }
+
+    for (user, permissions) in users_to_update {
+        let user_permissions = db.get_user_permissions(&user, guild_id).unwrap_or_default();
+
+        if !user_permissions.can(auth::Permission::Moderator) {
+            db.insert_user_permission(&user, guild_id, permissions)?;
+        }
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert("HX-Refresh", HeaderValue::from_static("true"));

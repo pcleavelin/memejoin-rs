@@ -1,4 +1,9 @@
+use std::str::FromStr;
+
+use enum_iterator::Sequence;
 use serde::{Deserialize, Serialize};
+
+use crate::routes::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Discord {
@@ -31,20 +36,52 @@ impl Default for Permissions {
 
 impl Permissions {
     pub(crate) fn can(&self, perm: Permission) -> bool {
-        self.0 & (perm as u8) > 0
+        (self.0 & (perm as u8) > 0) || (self.0 & (Permission::Moderator as u8) > 0)
+    }
+
+    pub(crate) fn add(&mut self, perm: Permission) {
+        self.0 |= perm as u8;
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Sequence)]
 #[repr(u8)]
-pub enum Permission {
-    None,
-    UploadSounds,
-    DeleteSounds,
+pub(crate) enum Permission {
+    None = 0,
+    UploadSounds = 1,
+    DeleteSounds = 2,
+    Soundboard = 4,
+    Moderator = 128,
 }
 
 impl Permission {
     pub(crate) fn all() -> u8 {
         0xFF
+    }
+}
+
+impl ToString for Permission {
+    fn to_string(&self) -> String {
+        match self {
+            Permission::None => todo!(),
+            Permission::UploadSounds => "Upload Sounds".to_string(),
+            Permission::DeleteSounds => "Delete Sounds".to_string(),
+            Permission::Soundboard => "Soundboard".to_string(),
+            Permission::Moderator => "Moderator".to_string(),
+        }
+    }
+}
+
+impl FromStr for Permission {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Upload Sounds" => Ok(Self::UploadSounds),
+            "Delete Sounds" => Ok(Self::DeleteSounds),
+            "Soundboard" => Ok(Self::Soundboard),
+            "Moderator" => Ok(Self::Moderator),
+            _ => Err(Self::Err::InvalidRequest),
+        }
     }
 }

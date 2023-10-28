@@ -136,6 +136,10 @@ fn spawn_api(db: Arc<tokio::sync::Mutex<db::Database>>) {
             .route("/index.html", get(page::home))
             .route("/login", get(page::login))
             .route("/guild/:guild_id", get(page::guild_dashboard))
+            .route(
+                "/guild/:guild_id/permissions/update",
+                post(routes::update_guild_permissions),
+            )
             .route("/v2/auth", get(routes::v2_auth))
             .route(
                 "/v2/intros/add/:guild_id/:channel",
