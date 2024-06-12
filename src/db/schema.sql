@@ -1,6 +1,6 @@
 BEGIN;
 
-create table User
+create table if not exists User
 (
     username TEXT not null
         constraint User_pk
@@ -11,7 +11,7 @@ create table User
     discord_token_expires_at DATETIME not null
 );
 
-create table Intro
+create table if not exists Intro
 (
     id     integer not null
         constraint Intro_pk
@@ -24,7 +24,7 @@ create table Intro
     filename   TEXT    not null
 );
 
-create table Guild
+create table if not exists Guild
 (
     id          integer    not null
         primary key,
@@ -32,7 +32,7 @@ create table Guild
     sound_delay integer not null
 );
 
-create table Channel
+create table if not exists Channel
 (
     name     TEXT
         primary key,
@@ -41,7 +41,7 @@ create table Channel
             references Guild (id)
 );
 
-create table UserGuild
+create table if not exists UserGuild
 (
     username TEXT not null
         constraint UserGuild_User_username_fk
@@ -52,7 +52,7 @@ create table UserGuild
     primary key ("username", "guild_id")
 );
 
-create table UserIntro
+create table if not exists UserIntro
 (
     username     text    not null
         constraint UserIntro_User_username_fk
@@ -69,7 +69,7 @@ create table UserIntro
     primary key ("username", "intro_id", "guild_id", "channel_name")
 );
 
-create table UserPermission
+create table if not exists UserPermission
 (
     username    TEXT    not null
         constraint UserPermission_User_username_fk
@@ -79,6 +79,15 @@ create table UserPermission
             references Guild ("id"),
     permissions integer not null,
     primary key ("username", "guild_id")
+);
+
+create table if not exists UserAppPermission
+(
+    username    TEXT    not null
+        constraint UserPermission_User_username_fk
+            references User,
+    permissions integer not null,
+    primary key ("username")
 );
 
 COMMIT;

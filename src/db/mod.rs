@@ -18,6 +18,12 @@ impl Database {
         })
     }
 
+    pub(crate) fn init(&self) -> Result<()> {
+        self.conn.execute_batch(include_str!("schema.sql"))?;
+
+        Ok(())
+    }
+
     pub(crate) fn get_guild_users(&self, guild_id: u64) -> Result<Vec<String>> {
         let mut query = self.conn.prepare(
             "
@@ -37,6 +43,22 @@ impl Database {
         Ok(users)
     }
 
+    pub fn get_guild(&self, guild_id: u64) -> Result<String> {
+        let mut query = self.conn.prepare(
+            "
+            SELECT
+                Guild.name
+            FROM Guild
+            WHERE Guild.id = :guild_id
+            ",
+        )?;
+
+        let guild_name =
+            query.query_row(&[(":guild_id", &guild_id.to_string())], |row| row.get(0))?;
+
+        Ok(guild_name)
+    }
+
     pub(crate) fn get_guilds(&self) -> Result<Vec<Guild>> {
         let mut query = self.conn.prepare(
             "
@@ -48,6 +70,7 @@ impl Database {
 
         // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
         // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        #[allow(clippy::useless_conversion)]
         let guilds = query
             .query_map([], |row| {
                 Ok(Guild {
@@ -60,6 +83,18 @@ impl Database {
             .collect::<Result<Vec<Guild>>>();
 
         guilds
+    }
+
+    pub(crate) fn get_user_count(&self) -> Result<i64> {
+        self.conn.query_row(
+            "
+            SELECT
+                COUNT(username)
+            FROM User
+            ",
+            [],
+            |row| row.get(0),
+        )
     }
 
     pub(crate) fn get_user_from_api_key(&self, api_key: &str) -> Result<User> {
@@ -119,6 +154,7 @@ impl Database {
 
         // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
         // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        #[allow(clippy::useless_conversion)]
         let guilds = query
             .query_map(&[(":username", username)], |row| {
                 Ok(Guild {
@@ -148,6 +184,7 @@ impl Database {
 
         // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
         // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        #[allow(clippy::useless_conversion)]
         let intros = query
             .query_map(
                 &[
@@ -187,6 +224,7 @@ impl Database {
 
         // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
         // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        #[allow(clippy::useless_conversion)]
         let intros = query
             .query_map(
                 &[
@@ -258,6 +296,20 @@ impl Database {
         )
     }
 
+    pub(crate) fn get_user_app_permissions(&self, username: &str) -> Result<auth::AppPermissions> {
+        self.conn.query_row(
+            "
+            SELECT
+                permissions
+            FROM UserAppPermission
+            WHERE
+                username = ?1
+            ",
+            [username],
+            |row| Ok(auth::AppPermissions(row.get(0)?)),
+        )
+    }
+
     pub(crate) fn get_guild_channels(&self, guild_id: u64) -> Result<Vec<String>> {
         let mut query = self.conn.prepare(
             "
@@ -272,13 +324,14 @@ impl Database {
 
         // NOTE(pcleavelin): for some reason this needs to be a let-binding or else
         // the compiler complains about it being dropped too early (maybe I should update the compiler version)
+        #[allow(clippy::useless_conversion)]
         let intros = query
             .query_map(
                 &[
                     // :vomit:
                     (":guild_id", &guild_id.to_string()),
                 ],
-                |row| Ok(row.get(0)?),
+                |row| row.get(0),
             )?
             .into_iter()
             .collect::<Result<Vec<String>>>();
@@ -295,11 +348,45 @@ impl Database {
         let all_user_intros = self.get_all_user_intros(guild_id)?.into_iter();
 
         let intros = all_user_intros
-            .filter(|intro| &intro.username == &username && &intro.channel_name == channel_name)
+            .filter(|intro| intro.username == username && intro.channel_name == channel_name)
             .map(|intro| intro.intro)
             .collect();
 
         Ok(intros)
+    }
+
+    pub fn insert_guild(&self, guild_id: &u64, name: &str, sound_delay: u32) -> Result<()> {
+        let affected = self.conn.execute(
+            "INSERT INTO
+                Guild (id, name, sound_delay)
+            VALUES (?1, ?2, ?3)",
+            [
+                guild_id.to_string(),
+                name.to_string(),
+                sound_delay.to_string(),
+            ],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to insert guild");
+        }
+
+        Ok(())
+    }
+
+    pub fn insert_guild_channel(&self, guild_id: &u64, name: &str) -> Result<()> {
+        let affected = self.conn.execute(
+            "INSERT INTO
+                Channel (name, guild_id)
+            VALUES (?1, ?2)",
+            [name.to_string(), guild_id.to_string()],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to insert channel");
+        }
+
+        Ok(())
     }
 
     pub fn insert_user(
@@ -315,7 +402,7 @@ impl Database {
                 User (username, api_key, api_key_expires_at, discord_token, discord_token_expires_at)
             VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(username) DO UPDATE SET api_key = ?2, api_key_expires_at = ?3, discord_token = ?4, discord_token_expires_at = ?5",
-            &[
+            [
                 username,
                 api_key,
                 &api_key_expires_at.to_string(),
@@ -342,7 +429,7 @@ impl Database {
             "INSERT INTO
                 Intro (name, volume, guild_id, filename)
             VALUES (?1, ?2, ?3, ?4)",
-            &[name, &volume.to_string(), &guild_id.to_string(), filename],
+            [name, &volume.to_string(), &guild_id.to_string(), filename],
         )?;
 
         if affected < 1 {
@@ -355,7 +442,7 @@ impl Database {
     pub fn insert_user_guild(&self, username: &str, guild_id: u64) -> Result<()> {
         let affected = self.conn.execute(
             "INSERT OR IGNORE INTO UserGuild (username, guild_id) VALUES (?1, ?2)",
-            &[username, &guild_id.to_string()],
+            [username, &guild_id.to_string()],
         )?;
 
         if affected < 1 {
@@ -374,7 +461,7 @@ impl Database {
     ) -> Result<()> {
         let affected = self.conn.execute(
             "INSERT INTO UserIntro (username, guild_id, channel_name, intro_id) VALUES (?1, ?2, ?3, ?4)",
-            &[
+            [
                 username,
                 &guild_id.to_string(),
                 channel_name,
@@ -401,11 +488,32 @@ impl Database {
                 UserPermission (username, guild_id, permissions)
             VALUES (?1, ?2, ?3)
             ON CONFLICT(username, guild_id) DO UPDATE SET permissions = ?3",
-            &[username, &guild_id.to_string(), &permissions.0.to_string()],
+            [username, &guild_id.to_string(), &permissions.0.to_string()],
         )?;
 
         if affected < 1 {
             warn!("no rows affected when attempting to insert user permissions");
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn insert_user_app_permission(
+        &self,
+        username: &str,
+        permissions: auth::AppPermissions,
+    ) -> Result<()> {
+        let affected = self.conn.execute(
+            "
+            INSERT INTO
+                UserAppPermission (username, permissions)
+            VALUES (?1, ?2)
+            ON CONFLICT(username) DO UPDATE SET permissions = ?2",
+            [username, &permissions.0.to_string()],
+        )?;
+
+        if affected < 1 {
+            warn!("no rows affected when attempting to insert user app permissions");
         }
 
         Ok(())
@@ -421,12 +529,12 @@ impl Database {
         let affected = self.conn.execute(
             "DELETE FROM
                 UserIntro
-            WHERE 
-                username = ?1 
-            AND guild_id = ?2 
-            AND channel_name = ?3 
+            WHERE
+                username = ?1
+            AND guild_id = ?2
+            AND channel_name = ?3
             AND intro_id = ?4",
-            &[
+            [
                 username,
                 &guild_id.to_string(),
                 channel_name,

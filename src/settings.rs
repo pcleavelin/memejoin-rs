@@ -27,7 +27,7 @@ impl FromRequestParts<ApiState> for db::User {
         Parts { headers, .. }: &mut Parts,
         state: &ApiState,
     ) -> Result<Self, Self::Rejection> {
-        let jar = CookieJar::from_headers(&headers);
+        let jar = CookieJar::from_headers(headers);
 
         if let Some(token) = jar.get("access_token") {
             match state.db.lock().await.get_user_from_api_key(token.value()) {

@@ -8,19 +8,19 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        tag = "v0.2.1-alpha";
+        tag = "v0.2.2-alpha";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
         yt-dlp = pkgs.yt-dlp.overrideAttrs (oldAttr: rec {
           inherit (oldAttr) name;
-          version = "2023.02.17";
+          version = "2024.05.27";
           src = pkgs.fetchFromGitHub {
             owner = "yt-dlp";
             repo = "yt-dlp";
             rev = "${version}";
-            sha256 = "naC74T6aqCLX45wJLmygsMmTMqdqLbfXLjJKIKMRpiI=";
+            sha256 = "55zDAMwCJPn5zKrAFw4ogTxxmvjrv4PvhYO7PsHbRo4=";
           };
         });
         local-rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain).override {
@@ -42,7 +42,7 @@
             cmake
             libopus
             yt-dlp
-          ];
+          ] ++ (if pkgs.system == "aarch64-darwin" || pkgs.system == "x86_64-darwin" then [ darwin.apple_sdk.frameworks.Security darwin.apple_sdk.frameworks.SystemConfiguration ] else []);
         };
 
         packages = with pkgs; flake-utils.lib.flattenTree rec {
@@ -56,6 +56,11 @@
             cargoLock = {
               lockFile = ./Cargo.lock;
             };
+
+            # lol, why does `buildRustPackage` not work without this?
+            postPatch = ''
+              ln -sf ${./Cargo.lock} Cargo.lock
+            '';
           };
 
           docker = dockerTools.buildImage {

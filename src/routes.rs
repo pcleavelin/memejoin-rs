@@ -87,10 +87,25 @@ struct DiscordUser {
 }
 
 #[derive(Deserialize)]
-struct DiscordUserGuild {
+pub(crate) struct DiscordUserGuild {
     #[serde(deserialize_with = "serde_string_as_u64")]
     pub id: u64,
+    pub name: String,
     pub owner: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct DiscordChannel {
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub ty: u32,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[repr(u32)]
+pub(crate) enum ChannelType {
+    GuildText = 0,
+    GuildVoice = 2,
 }
 
 fn serde_string_as_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -138,7 +153,6 @@ pub(crate) async fn v2_auth(
             error!(?err, "auth error");
             Error::Auth(err.to_string())
         })?;
-    let token = Uuid::new_v4().to_string();
 
     // Get authorized username
     let user: DiscordUser = client
@@ -160,19 +174,18 @@ pub(crate) async fn v2_auth(
         .map_err(|err| Error::Auth(err.to_string()))?;
 
     let db = state.db.lock().await;
+    let needs_setup = db.get_user_count().map_err(Error::Database)? == 0;
+    let token = if let Some(user) = db
+        .get_user(&user.username)
+        .map_err(Error::Database)?
+        .filter(|user| user.api_key_expires_at >= Utc::now().naive_utc())
+    {
+        user.api_key
+    } else {
+        Uuid::new_v4().to_string()
+    };
 
-    let guilds = db.get_guilds().map_err(Error::Database)?;
-    let mut in_a_guild = false;
-    for guild in guilds {
-        let Some(discord_guild) = discord_guilds
-            .iter()
-            .find(|discord_guild| discord_guild.id == guild.id)
-        else {
-            continue;
-        };
-
-        in_a_guild = true;
-
+    if needs_setup {
         let now = Utc::now().naive_utc();
         db.insert_user(
             &user.username,
@@ -182,6 +195,37 @@ pub(crate) async fn v2_auth(
             now + Duration::seconds(auth.expires_in as i64),
         )
         .map_err(Error::Database)?;
+
+        db.insert_user_app_permission(
+            &user.username,
+            auth::AppPermissions(auth::AppPermission::all()),
+        )
+        .map_err(Error::Database)?;
+    }
+
+    let guilds = db.get_guilds().map_err(Error::Database)?;
+    let mut in_a_guild = false;
+    for guild in guilds {
+        let Some(discord_guild) = discord_guilds
+            .iter()
+            .find(|discord_guild| discord_guild.id == guild.id)
+            else {
+                continue;
+            };
+
+        in_a_guild = true;
+
+        if !needs_setup {
+            let now = Utc::now().naive_utc();
+            db.insert_user(
+                &user.username,
+                &token,
+                now + Duration::weeks(4),
+                &auth.access_token,
+                now + Duration::seconds(auth.expires_in as i64),
+            )
+            .map_err(Error::Database)?;
+        }
 
         db.insert_user_guild(&user.username, guild.id)
             .map_err(Error::Database)?;
@@ -199,7 +243,6 @@ pub(crate) async fn v2_auth(
             .map_err(Error::Database)?;
         }
     }
-
     if !in_a_guild {
         return Err(Error::NoGuildFound);
     }
@@ -208,7 +251,7 @@ pub(crate) async fn v2_auth(
 
     let uri = Url::parse(&state.origin).expect("should be a valid url");
 
-    let mut cookie = Cookie::new("access_token", token.clone());
+    let mut cookie = Cookie::new("access_token", token);
     cookie.set_path(uri.path().to_string());
     cookie.set_secure(true);
 
@@ -437,6 +480,67 @@ pub(crate) async fn v2_add_guild_intro(
 
     db.insert_intro(&name, 0, guild_id, &format!("{uuid}.mp3"))
         .map_err(Error::Database)?;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+
+    Ok(headers)
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct GuildSetupParams {
+    name: String,
+}
+
+pub(crate) async fn guild_setup(
+    State(state): State<ApiState>,
+    user: db::User,
+    Path(guild_id): Path<u64>,
+    Query(GuildSetupParams { name }): Query<GuildSetupParams>,
+) -> Result<Redirect, Error> {
+    let db = state.db.lock().await;
+
+    let user_permissions = db.get_user_app_permissions(&user.name).unwrap_or_default();
+    if !user_permissions.can(auth::AppPermission::AddGuild) {
+        return Err(Error::InvalidPermission);
+    }
+
+    db.insert_guild(&guild_id, &name, 0)?;
+    db.insert_user_guild(&user.name, guild_id)?;
+    db.insert_user_permission(
+        &user.name,
+        guild_id,
+        auth::Permissions(auth::Permission::all()),
+    )?;
+
+    Ok(Redirect::to(&format!(
+        "{}/guild/{}",
+        state.origin, guild_id
+    )))
+}
+
+pub(crate) async fn guild_add_channel(
+    State(state): State<ApiState>,
+    user: db::User,
+    Path(guild_id): Path<u64>,
+    mut form_data: Multipart,
+) -> Result<HeaderMap, Error> {
+    let db = state.db.lock().await;
+
+    let user_permissions = db
+        .get_user_permissions(&user.name, guild_id)
+        .unwrap_or_default();
+    if !user_permissions.can(auth::Permission::AddChannel) {
+        return Err(Error::InvalidPermission);
+    }
+
+    while let Ok(Some(field)) = form_data.next_field().await {
+        let Some(channel_name) = field.name() else {
+            continue;
+        };
+
+        db.insert_guild_channel(&guild_id, channel_name)?;
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert("HX-Refresh", HeaderValue::from_static("true"));

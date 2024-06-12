@@ -1,6 +1,6 @@
-#![feature(stmt_expr_attributes)]
-#![feature(proc_macro_hygiene)]
-#![feature(async_closure)]
+// #![feature(stmt_expr_attributes)]
+// #![feature(proc_macro_hygiene)]
+// #![feature(async_closure)]
 
 mod auth;
 mod db;
@@ -121,6 +121,7 @@ fn spawn_api(db: Arc<tokio::sync::Mutex<db::Database>>) {
         client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
         client_secret: env::var("DISCORD_CLIENT_SECRET")
             .expect("expected DISCORD_CLIENT_SECRET env var"),
+        bot_token: env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var"),
     };
     let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
@@ -136,6 +137,11 @@ fn spawn_api(db: Arc<tokio::sync::Mutex<db::Database>>) {
             .route("/index.html", get(page::home))
             .route("/login", get(page::login))
             .route("/guild/:guild_id", get(page::guild_dashboard))
+            .route("/guild/:guild_id/setup", get(routes::guild_setup))
+            .route(
+                "/guild/:guild_id/add_channel",
+                post(routes::guild_add_channel),
+            )
             .route(
                 "/guild/:guild_id/permissions/update",
                 post(routes::update_guild_permissions),
@@ -319,6 +325,12 @@ async fn main() -> std::io::Result<()> {
     let db = Arc::new(tokio::sync::Mutex::new(
         db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
     ));
+
+    {
+        // attempt to initialize the database with the schema
+        let db = db.lock().await;
+        db.init().expect("couldn't init db");
+    }
 
     if run_api {
         spawn_api(db.clone());

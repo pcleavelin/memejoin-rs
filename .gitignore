@@ -1,5 +1,7 @@
 /target
-**/result
-result/
-result
+/config
+/sounds
+/.idea
+.DS_Store
+
 .env

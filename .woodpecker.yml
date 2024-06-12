@@ -4,9 +4,10 @@ steps:
       event: [push, tag]
     image: alpine:edge
     commands:
+      - apk update && apk upgrade
       - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
       - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
-      - nix build --extra-experimental-features nix-command --extra-experimental-features flakes .#docker
+      - nix build --extra-experimental-features nix-command --extra-experimental-features flakes --max-jobs 16 .#docker
       - cp $(nix build --extra-experimental-features nix-command --extra-experimental-features flakes --print-out-paths .#docker) ./memejoin-rs.tar.gz
     volumes:
       - ${AGENT_NIX_STORE_PATH}:/nix

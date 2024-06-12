@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 pub trait Build {
@@ -191,7 +193,7 @@ impl Build for HtmxBuilder {
                 }
             }
             if self.tag != Tag::JustText && self.tag != Tag::Empty {
-                string.push_str(">");
+                string.push('>');
             }
         }
 
@@ -229,23 +231,23 @@ impl HtmxBuilder {
         self
     }
 
-    pub fn hx_get(mut self, uri: &str) -> Self {
+    pub fn hx_get(self, uri: &str) -> Self {
         self.attribute("hx-get", uri)
     }
 
-    pub fn hx_post(mut self, uri: &str) -> Self {
+    pub fn hx_post(self, uri: &str) -> Self {
         self.attribute("hx-post", uri)
     }
 
-    pub fn hx_swap(mut self, swap_method: SwapMethod) -> Self {
+    pub fn hx_swap(self, swap_method: SwapMethod) -> Self {
         self.attribute("hx-swap", swap_method.as_str())
     }
 
-    pub fn hx_trigger(mut self, trigger: &str) -> Self {
+    pub fn hx_trigger(self, trigger: &str) -> Self {
         self.attribute("hx-trigger", trigger)
     }
 
-    pub fn hx_target(mut self, target: &str) -> Self {
+    pub fn hx_target(self, target: &str) -> Self {
         self.attribute("hx-target", target)
     }
 
