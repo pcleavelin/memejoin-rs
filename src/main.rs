@@ -2,6 +2,8 @@
 // #![feature(proc_macro_hygiene)]
 // #![feature(async_closure)]
 
+mod lib;
+
 mod auth;
 mod db;
 mod htmx;
@@ -31,6 +33,8 @@ use serenity::prelude::*;
 use songbird::SerenityInit;
 use tracing::*;
 
+use crate::lib::domain::intro_tool;
+use crate::lib::outbound;
 use crate::settings::Settings;
 
 enum HandlerMessage {
@@ -344,37 +348,52 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
 #[instrument]
 async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
-
     tracing_subscriber::fmt::init();
 
     let settings = serde_json::from_str::<Settings>(
         &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
     )
     .expect("error parsing settings file");
-    info!("{settings:?}");
 
-    let (run_api, run_bot) = (settings.run_api, settings.run_bot);
-    let db = Arc::new(tokio::sync::Mutex::new(
-        db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
-    ));
+    let db = outbound::sqlite::Sqlite::new(".config/db.sqlite").expect("couldn't open sqlite db");
+    let service = intro_tool::service::Service::new(db);
 
-    {
-        // attempt to initialize the database with the schema
-        let db = db.lock().await;
-        db.init().expect("couldn't init db");
-    }
-
-    if run_api {
-        spawn_api(db.clone());
-    }
-    if run_bot {
-        spawn_bot(db).await;
-    }
-
-    info!("spawned background tasks");
-
-    let _ = tokio::signal::ctrl_c().await;
-    info!("Received Ctrl-C, shuttdown down.");
+    // TODO: http server
 
     Ok(())
+
+    // dotenv::dotenv().ok();
+    //
+    // tracing_subscriber::fmt::init();
+    //
+    // let settings = serde_json::from_str::<Settings>(
+    //     &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
+    // )
+    // .expect("error parsing settings file");
+    // info!("{settings:?}");
+    //
+    // let (run_api, run_bot) = (settings.run_api, settings.run_bot);
+    // let db = Arc::new(tokio::sync::Mutex::new(
+    //     db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
+    // ));
+    //
+    // {
+    //     // attempt to initialize the database with the schema
+    //     let db = db.lock().await;
+    //     db.init().expect("couldn't init db");
+    // }
+    //
+    // if run_api {
+    //     spawn_api(db.clone());
+    // }
+    // if run_bot {
+    //     spawn_bot(db).await;
+    // }
+    //
+    // info!("spawned background tasks");
+    //
+    // let _ = tokio::signal::ctrl_c().await;
+    // info!("Received Ctrl-C, shuttdown down.");
+    //
+    // Ok(())
 }

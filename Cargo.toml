@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.100"
 async-trait = "0.1.72"
 axum = { version = "0.6.9", features = ["headers", "multipart"] }
 axum-extra = { version = "0.7.5", features = ["cookie-private", "cookie"] }

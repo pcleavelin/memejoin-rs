@@ -24,7 +24,7 @@
           };
         });
         local-rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain).override {
-          extensions = [ "rust-analysis" ];
+          extensions = [ "rust-analyzer" "rust-src" ];
         };
       in
       {
