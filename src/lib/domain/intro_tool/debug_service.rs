@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
 
 use crate::lib::domain::intro_tool::{
-    models,
+    models::{self, guild::IntroId},
     ports::{IntroToolRepository, IntroToolService},
 };
 
@@ -112,7 +112,7 @@ where
     async fn add_intro_to_guild(
         &self,
         req: models::guild::AddIntroToGuildRequest,
-    ) -> Result<(), models::guild::AddIntroToGuildError> {
+    ) -> Result<IntroId, models::guild::AddIntroToGuildError> {
         self.wrapped_service.add_intro_to_guild(req).await
     }
 

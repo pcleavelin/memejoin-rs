@@ -1,3 +1,4 @@
+mod handlers;
 mod page;
 
 use std::{net::SocketAddr, sync::Arc};
@@ -115,10 +116,8 @@ where
         .route("/", get(page::home))
         .route("/login", get(page::login))
         .route("/guild/:guild_id", get(page::guild_dashboard))
-    // .route("/", get(page::home))
-    // .route("/index.html", get(page::home))
-    // .route("/login", get(page::login))
-    // .route("/guild/:guild_id", get(page::guild_dashboard))
+        .route("/v2/intros/:guild/add", get(handlers::add_guild_intro))
+
     // .route("/guild/:guild_id/setup", get(routes::guild_setup))
     // .route(
     //     "/guild/:guild_id/add_channel",

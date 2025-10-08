@@ -258,10 +258,16 @@ pub struct CreateChannelRequest {
 }
 
 pub struct AddIntroToGuildRequest {
-    guild_id: GuildId,
-    name: String,
-    volume: i32,
-    filename: String,
+    pub guild_id: GuildId,
+    pub name: String,
+    pub volume: i32,
+
+    pub data: IntroRequestData,
+}
+
+pub enum IntroRequestData {
+    Data(Vec<u8>),
+    Url(String),
 }
 
 pub struct AddIntroToUserRequest {

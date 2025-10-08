@@ -1,6 +1,6 @@
 use std::{collections::HashMap, future::Future};
 
-use crate::lib::domain::intro_tool::models::guild::ChannelName;
+use crate::lib::domain::intro_tool::models::guild::{ChannelName, IntroId};
 
 use super::models::guild::{
     AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserError, AddIntroToUserRequest,
@@ -44,10 +44,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         req: CreateChannelRequest,
     ) -> Result<Channel, CreateChannelError>;
 
-    async fn add_intro_to_guild(
+    fn add_intro_to_guild(
         &self,
         req: AddIntroToGuildRequest,
-    ) -> Result<(), AddIntroToGuildError>;
+    ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
 
     async fn add_intro_to_user(
         &self,
@@ -104,10 +104,12 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         req: CreateChannelRequest,
     ) -> Result<Channel, CreateChannelError>;
 
-    async fn add_intro_to_guild(
+    fn add_intro_to_guild(
         &self,
-        req: AddIntroToGuildRequest,
-    ) -> Result<(), AddIntroToGuildError>;
+        name: &str,
+        guild_id: GuildId,
+        filename: String,
+    ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
 
     async fn add_intro_to_user(
         &self,

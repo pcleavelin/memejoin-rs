@@ -133,6 +133,8 @@ pub async fn guild_dashboard<S: IntroToolService>(
         return Err(Redirect::to(&format!("{}/error", state.origin)));
     }
 
+    let can_upload = true;
+
     Ok(Html(
         HtmxBuilder::new(Tag::Html)
             .push_builder(page_header("MemeJoin - Dashboard"))
@@ -156,24 +158,24 @@ pub async fn guild_dashboard<S: IntroToolService>(
                 // } else {
                 //     b
                 // };
-                // b = if can_upload {
-                //     b.builder(Tag::Div, |b| {
-                //         b.attribute("class", "container")
-                //             .builder(Tag::Article, |b| {
-                //                 b.builder_text(Tag::Header, "Upload New Intro")
-                //                     .push_builder(upload_form(&state.origin, guild_id))
-                //             })
-                //     })
-                //     .builder(Tag::Div, |b| {
-                //         b.attribute("class", "container")
-                //             .builder(Tag::Article, |b| {
-                //                 b.builder_text(Tag::Header, "Upload New Intro from Url")
-                //                     .push_builder(ytdl_form(&state.origin, guild_id))
-                //             })
-                //     })
-                // } else {
-                //     b
-                // };
+                let b = if can_upload {
+                    b.builder(Tag::Div, |b| {
+                        b.attribute("class", "container")
+                            .builder(Tag::Article, |b| {
+                                b.builder_text(Tag::Header, "Upload New Intro")
+                                    .push_builder(upload_form(&state.origin, guild_id))
+                            })
+                    })
+                    .builder(Tag::Div, |b| {
+                        b.attribute("class", "container")
+                            .builder(Tag::Article, |b| {
+                                b.builder_text(Tag::Header, "Upload New Intro from Url")
+                                    .push_builder(ytdl_form(&state.origin, guild_id))
+                            })
+                    })
+                } else {
+                    b
+                };
 
                 b.builder(Tag::Div, |b| {
                     b.attribute("class", "container")
@@ -288,5 +290,43 @@ fn intro_list<'a>(intros: impl Iterator<Item = &'a Intro>, label: &str, post: &s
                 b
             })
             .button(|b| b.attribute("type", "submit").text(label))
+    })
+}
+
+fn upload_form(origin: &str, guild_id: u64) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).form(|b| {
+        b.attribute("class", "container")
+            .hx_post(&format!("{}/v2/intros/{}/upload", origin, guild_id))
+            .attribute("hx-encoding", "multipart/form-data")
+            .builder(Tag::FieldSet, |b| {
+                b.attribute("class", "container")
+                    .attribute("role", "group")
+                    .input(|b| b.attribute("type", "file").attribute("name", "file"))
+                    .input(|b| {
+                        b.attribute("name", "name")
+                            .attribute("placeholder", "enter intro title")
+                    })
+                    .button(|b| b.attribute("type", "submit").text("Upload"))
+            })
+    })
+}
+
+fn ytdl_form(origin: &str, guild_id: u64) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).form(|b| {
+        b.attribute("class", "container")
+            .hx_get(&format!("{}/v2/intros/{}/add", origin, guild_id))
+            .builder(Tag::FieldSet, |b| {
+                b.attribute("class", "container")
+                    .attribute("role", "group")
+                    .input(|b| {
+                        b.attribute("placeholder", "enter video url")
+                            .attribute("name", "url")
+                    })
+                    .input(|b| {
+                        b.attribute("placeholder", "enter intro title")
+                            .attribute("name", "name")
+                    })
+                    .button(|b| b.attribute("type", "submit").text("Upload"))
+            })
     })
 }

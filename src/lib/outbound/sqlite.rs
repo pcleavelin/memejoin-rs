@@ -10,7 +10,7 @@ use crate::lib::domain::intro_tool::{
         self, AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserRequest, Channel,
         ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,
         CreateGuildRequest, CreateUserError, CreateUserRequest, GetChannelError, GetGuildError,
-        GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, User, UserName,
+        GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId, User, UserName,
     },
     ports::IntroToolRepository,
 };
@@ -347,9 +347,47 @@ impl IntroToolRepository for Sqlite {
 
     async fn add_intro_to_guild(
         &self,
-        req: AddIntroToGuildRequest,
-    ) -> Result<(), AddIntroToGuildError> {
-        todo!()
+        name: &str,
+        guild_id: GuildId,
+        filename: String,
+    ) -> Result<IntroId, AddIntroToGuildError> {
+        let conn = self.conn.lock().await;
+
+        let mut query = conn
+            .prepare(
+                "
+                INSERT INTO Intro
+                (
+                    name,
+                    volume,
+                    guild_id,
+                    filename
+                )
+                VALUES
+                (
+                    :name,
+                    :volume,
+                    :guild_id,
+                    :filename
+                )
+                RETURNING id
+                ",
+            )
+            .context("failed to prepare query")?;
+
+        let intro_id = query
+            .query_row(
+                &[
+                    (":name", name),
+                    (":volume", &0.to_string()),
+                    (":guild_id", &guild_id.to_string()),
+                    (":filename", &filename),
+                ],
+                |row| Ok(row.get::<_, i32>(0)?.into()),
+            )
+            .context("failed to query row")?;
+
+        Ok(intro_id)
     }
 
     async fn add_intro_to_user(
