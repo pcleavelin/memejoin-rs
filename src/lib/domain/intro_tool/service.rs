@@ -1,9 +1,12 @@
 use anyhow::{anyhow, Context};
 use uuid::Uuid;
 
-use crate::lib::domain::intro_tool::{
-    models::guild::{self, GetUserError, GuildId, IntroId, User},
-    ports::{IntroToolRepository, IntroToolService},
+use crate::{
+    lib::domain::intro_tool::{
+        models::guild::{self, GetUserError, GuildId, IntroId, User},
+        ports::{IntroToolRepository, IntroToolService},
+    },
+    media,
 };
 
 use super::models;
@@ -98,14 +101,28 @@ where
         req: guild::AddIntroToGuildRequest,
     ) -> Result<IntroId, guild::AddIntroToGuildError> {
         let file_name = match &req.data {
-            guild::IntroRequestData::Data(items) => todo!(),
+            guild::IntroRequestData::Data(bytes) => {
+                // TODO: put this behind an interface
+                let uuid = Uuid::new_v4().to_string();
+                let temp_path = format!("./sounds/temp/{uuid}");
+                let dest_path = format!("./sounds/{uuid}.mp3");
+
+                // Write original file so its ready for codec conversion
+                std::fs::write(&temp_path, bytes).context("failed to write temp file")?;
+                media::normalize(&temp_path, &dest_path)
+                    .await
+                    .context("failed to normalize file")?;
+                std::fs::remove_file(&temp_path).context("failed to remove temp file")?;
+
+                dest_path
+            }
             guild::IntroRequestData::Url(url) => {
                 let uuid = Uuid::new_v4().to_string();
                 let file_name = format!("sounds/{uuid}");
 
                 // TODO: put this behind an interface
                 let child = tokio::process::Command::new("yt-dlp")
-                    .arg(&url)
+                    .arg(url)
                     .args(["-o", &file_name])
                     .args(["-x", "--audio-format", "mp3"])
                     .spawn()
