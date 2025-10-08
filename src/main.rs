@@ -34,7 +34,7 @@ use songbird::SerenityInit;
 use tracing::*;
 
 use crate::lib::domain::intro_tool;
-use crate::lib::outbound;
+use crate::lib::{inbound, outbound};
 use crate::settings::Settings;
 
 enum HandlerMessage {
@@ -354,11 +354,32 @@ async fn main() -> std::io::Result<()> {
         &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
     )
     .expect("error parsing settings file");
+    let secrets = auth::DiscordSecret {
+        client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
+        client_secret: env::var("DISCORD_CLIENT_SECRET")
+            .expect("expected DISCORD_CLIENT_SECRET env var"),
+        bot_token: env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var"),
+    };
+    let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
-    let db = outbound::sqlite::Sqlite::new(".config/db.sqlite").expect("couldn't open sqlite db");
-    let service = intro_tool::service::Service::new(db);
+    let db = outbound::sqlite::Sqlite::new("./config/db.sqlite").expect("couldn't open sqlite db");
 
-    // TODO: http server
+    if let Ok(impersonated_username) = env::var("IMPERSONATED_USERNAME") {
+        let service = intro_tool::service::Service::new(db);
+        let service = intro_tool::debug_service::DebugService::new(service, impersonated_username);
+
+        let http_server = inbound::http::HttpServer::new(service, secrets, origin)
+            .expect("couldn't start http server");
+
+        http_server.run().await;
+    } else {
+        let service = intro_tool::service::Service::new(db);
+
+        let http_server = inbound::http::HttpServer::new(service, secrets, origin)
+            .expect("couldn't start http server");
+
+        http_server.run().await;
+    }
 
     Ok(())
 
