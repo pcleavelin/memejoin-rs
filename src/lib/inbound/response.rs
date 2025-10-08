@@ -7,7 +7,7 @@ use axum::{
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::lib::domain::intro_tool::models::guild::{
+use crate::domain::intro_tool::models::guild::{
     AddIntroToGuildError, GetChannelError, GetGuildError, GetIntroError,
 };
 

@@ -249,66 +249,66 @@ impl Database {
         intros
     }
 
-    pub(crate) fn get_all_user_permissions(
-        &self,
-        guild_id: u64,
-    ) -> Result<Vec<(String, auth::Permissions)>> {
-        let mut query = self.conn.prepare(
-            "
-            SELECT
-                username,
-                permissions
-            FROM UserPermission
-            WHERE
-                guild_id = :guild_id
-            ",
-        )?;
+    // pub(crate) fn get_all_user_permissions(
+    //     &self,
+    //     guild_id: u64,
+    // ) -> Result<Vec<(String, auth::Permissions)>> {
+    //     let mut query = self.conn.prepare(
+    //         "
+    //         SELECT
+    //             username,
+    //             permissions
+    //         FROM UserPermission
+    //         WHERE
+    //             guild_id = :guild_id
+    //         ",
+    //     )?;
+    //
+    //     let permissions = query
+    //         .query_map(
+    //             &[
+    //                 // :vomit:
+    //                 (":guild_id", &guild_id.to_string()),
+    //             ],
+    //             |row| Ok((row.get(0)?, auth::Permissions(row.get(1)?))),
+    //         )?
+    //         .collect::<Result<Vec<(String, auth::Permissions)>>>()?;
+    //
+    //     Ok(permissions)
+    // }
 
-        let permissions = query
-            .query_map(
-                &[
-                    // :vomit:
-                    (":guild_id", &guild_id.to_string()),
-                ],
-                |row| Ok((row.get(0)?, auth::Permissions(row.get(1)?))),
-            )?
-            .collect::<Result<Vec<(String, auth::Permissions)>>>()?;
+    // pub(crate) fn get_user_permissions(
+    //     &self,
+    //     username: &str,
+    //     guild_id: u64,
+    // ) -> Result<auth::Permissions> {
+    //     self.conn.query_row(
+    //         "
+    //         SELECT
+    //             permissions
+    //         FROM UserPermission
+    //         WHERE
+    //             username = ?1
+    //         AND guild_id = ?2
+    //         ",
+    //         [username, &guild_id.to_string()],
+    //         |row| Ok(auth::Permissions(row.get(0)?)),
+    //     )
+    // }
 
-        Ok(permissions)
-    }
-
-    pub(crate) fn get_user_permissions(
-        &self,
-        username: &str,
-        guild_id: u64,
-    ) -> Result<auth::Permissions> {
-        self.conn.query_row(
-            "
-            SELECT
-                permissions
-            FROM UserPermission
-            WHERE
-                username = ?1
-            AND guild_id = ?2
-            ",
-            [username, &guild_id.to_string()],
-            |row| Ok(auth::Permissions(row.get(0)?)),
-        )
-    }
-
-    pub(crate) fn get_user_app_permissions(&self, username: &str) -> Result<auth::AppPermissions> {
-        self.conn.query_row(
-            "
-            SELECT
-                permissions
-            FROM UserAppPermission
-            WHERE
-                username = ?1
-            ",
-            [username],
-            |row| Ok(auth::AppPermissions(row.get(0)?)),
-        )
-    }
+    // pub(crate) fn get_user_app_permissions(&self, username: &str) -> Result<auth::AppPermissions> {
+    //     self.conn.query_row(
+    //         "
+    //         SELECT
+    //             permissions
+    //         FROM UserAppPermission
+    //         WHERE
+    //             username = ?1
+    //         ",
+    //         [username],
+    //         |row| Ok(auth::AppPermissions(row.get(0)?)),
+    //     )
+    // }
 
     pub(crate) fn get_guild_channels(&self, guild_id: u64) -> Result<Vec<String>> {
         let mut query = self.conn.prepare(
@@ -476,28 +476,29 @@ impl Database {
         Ok(())
     }
 
-    pub(crate) fn insert_user_permission(
-        &self,
-        username: &str,
-        guild_id: u64,
-        permissions: auth::Permissions,
-    ) -> Result<()> {
-        let affected = self.conn.execute(
-            "
-            INSERT INTO
-                UserPermission (username, guild_id, permissions)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(username, guild_id) DO UPDATE SET permissions = ?3",
-            [username, &guild_id.to_string(), &permissions.0.to_string()],
-        )?;
+    // pub(crate) fn insert_user_permission(
+    //     &self,
+    //     username: &str,
+    //     guild_id: u64,
+    //     permissions: auth::Permissions,
+    // ) -> Result<()> {
+    //     let affected = self.conn.execute(
+    //         "
+    //         INSERT INTO
+    //             UserPermission (username, guild_id, permissions)
+    //         VALUES (?1, ?2, ?3)
+    //         ON CONFLICT(username, guild_id) DO UPDATE SET permissions = ?3",
+    //         [username, &guild_id.to_string(), &permissions.0.to_string()],
+    //     )?;
+    //
+    //     if affected < 1 {
+    //         warn!("no rows affected when attempting to insert user permissions");
+    //     }
+    //
+    //     Ok(())
+    // }
 
-        if affected < 1 {
-            warn!("no rows affected when attempting to insert user permissions");
-        }
-
-        Ok(())
-    }
-
+    /*
     pub(crate) fn insert_user_app_permission(
         &self,
         username: &str,
@@ -518,6 +519,7 @@ impl Database {
 
         Ok(())
     }
+    */
 
     pub fn delete_user_intro(
         &self,

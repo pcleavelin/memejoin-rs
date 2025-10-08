@@ -1,29 +1,16 @@
-// #![feature(stmt_expr_attributes)]
-// #![feature(proc_macro_hygiene)]
-// #![feature(async_closure)]
-
-mod lib;
-
-mod auth;
 mod db;
-mod htmx;
-mod media;
-mod page;
-mod routes;
 pub mod settings;
 
+use serenity::all::Cache;
+use songbird::driver::Bitrate;
+use songbird::input::LiveInput;
 use axum::http::Method;
 use axum::routing::{get, post};
 use axum::Router;
-use serenity::all::Cache;
 use settings::ApiState;
-use songbird::driver::Bitrate;
-use songbird::input::LiveInput;
 use std::env;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tower_http::cors::{Any, CorsLayer};
 
 use serenity::async_trait;
 use serenity::model::prelude::{Channel, ChannelId, GuildId, Member, Ready};
@@ -33,9 +20,7 @@ use serenity::prelude::*;
 use songbird::SerenityInit;
 use tracing::*;
 
-use crate::lib::domain::intro_tool;
-use crate::lib::{inbound, outbound};
-use crate::settings::Settings;
+use memejoin_rs::{auth, domain::intro_tool, inbound, outbound};
 
 enum HandlerMessage {
     Ready(Context),
@@ -128,67 +113,6 @@ impl EventHandler for Handler {
             }
         }
     }
-}
-
-fn spawn_api(db: Arc<tokio::sync::Mutex<db::Database>>) {
-    let secrets = auth::DiscordSecret {
-        client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
-        client_secret: env::var("DISCORD_CLIENT_SECRET")
-            .expect("expected DISCORD_CLIENT_SECRET env var"),
-        bot_token: env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var"),
-    };
-    let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
-
-    let state = ApiState {
-        db,
-        secrets,
-        origin: origin.clone(),
-    };
-
-    tokio::spawn(async move {
-        let api = Router::new()
-            .route("/", get(page::home))
-            .route("/index.html", get(page::home))
-            .route("/login", get(page::login))
-            .route("/guild/:guild_id", get(page::guild_dashboard))
-            .route("/guild/:guild_id/setup", get(routes::guild_setup))
-            .route(
-                "/guild/:guild_id/add_channel",
-                post(routes::guild_add_channel),
-            )
-            .route(
-                "/guild/:guild_id/permissions/update",
-                post(routes::update_guild_permissions),
-            )
-            .route("/v2/auth", get(routes::v2_auth))
-            .route(
-                "/v2/intros/add/:guild_id/:channel",
-                post(routes::v2_add_intro_to_user),
-            )
-            .route(
-                "/v2/intros/remove/:guild_id/:channel",
-                post(routes::v2_remove_intro_from_user),
-            )
-            .route("/v2/intros/:guild/add", get(routes::v2_add_guild_intro))
-            .route(
-                "/v2/intros/:guild/upload",
-                post(routes::v2_upload_guild_intro),
-            )
-            .route("/health", get(routes::health))
-            .layer(
-                CorsLayer::new()
-                    .allow_origin([origin.parse().unwrap()])
-                    .allow_headers(Any)
-                    .allow_methods([Method::GET, Method::POST, Method::DELETE]),
-            )
-            .with_state(state);
-        let addr = SocketAddr::from(([0, 0, 0, 0], 8100));
-        info!("socket listening on {addr}");
-        axum::Server::bind(&addr)
-            .serve(api.into_make_service())
-            .await
-            .unwrap();
-    });
 }
 
 async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
@@ -350,10 +274,6 @@ async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let settings = serde_json::from_str::<Settings>(
-        &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
-    )
-    .expect("error parsing settings file");
     let secrets = auth::DiscordSecret {
         client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
         client_secret: env::var("DISCORD_CLIENT_SECRET")
@@ -363,9 +283,12 @@ async fn main() -> std::io::Result<()> {
     let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
     let db = outbound::sqlite::Sqlite::new("./config/db.sqlite").expect("couldn't open sqlite db");
+    let local_audio_fetcher = outbound::ffmpeg::Ffmpeg;
+    let remote_audio_fetcher = outbound::ytdlp::Ytdlp;
 
     if let Ok(impersonated_username) = env::var("IMPERSONATED_USERNAME") {
-        let service = intro_tool::service::Service::new(db);
+        let service =
+            intro_tool::service::Service::new(db, remote_audio_fetcher, local_audio_fetcher);
         let service = intro_tool::debug_service::DebugService::new(service, impersonated_username);
 
         let http_server = inbound::http::HttpServer::new(service, secrets, origin)
@@ -373,7 +296,8 @@ async fn main() -> std::io::Result<()> {
 
         http_server.run().await;
     } else {
-        let service = intro_tool::service::Service::new(db);
+        let service =
+            intro_tool::service::Service::new(db, remote_audio_fetcher, local_audio_fetcher);
 
         let http_server = inbound::http::HttpServer::new(service, secrets, origin)
             .expect("couldn't start http server");

@@ -17,7 +17,7 @@ use tracing::info;
 
 use crate::{
     auth,
-    lib::domain::intro_tool::{models::guild::User, ports::IntroToolService},
+    domain::intro_tool::{models::guild::User, ports::IntroToolService},
 };
 
 #[derive(Clone)]

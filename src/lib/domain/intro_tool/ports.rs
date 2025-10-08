@@ -1,6 +1,6 @@
 use std::{collections::HashMap, future::Future};
 
-use crate::lib::domain::intro_tool::models::guild::{ChannelName, IntroId};
+use crate::domain::intro_tool::models::guild::{ChannelName, IntroId};
 
 use super::models::guild::{
     AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserError, AddIntroToUserRequest,
@@ -115,4 +115,20 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         &self,
         req: AddIntroToUserRequest,
     ) -> Result<(), AddIntroToUserError>;
+}
+
+pub trait RemoteAudioFetcher: Send + Sync + Clone + 'static {
+    fn fetch_remote_audio(
+        &self,
+        url: &str,
+        name: &str,
+    ) -> impl Future<Output = Result<String, anyhow::Error>> + Send;
+}
+
+pub trait LocalAudioFetcher: Send + Sync + Clone + 'static {
+    fn save_local_audio(
+        &self,
+        bytes: &[u8],
+        name: &str,
+    ) -> impl Future<Output = Result<String, anyhow::Error>> + Send;
 }

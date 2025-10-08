@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use anyhow::Context;
 use rusqlite::Connection;
 
-use crate::lib::domain::intro_tool::{
+use crate::domain::intro_tool::{
     models::guild::{
         self, AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserRequest, Channel,
         ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,

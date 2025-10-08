@@ -1,6 +1,6 @@
 use chrono::{Duration, Utc};
 
-use crate::lib::domain::intro_tool::{
+use crate::domain::intro_tool::{
     models::{self, guild::IntroId},
     ports::{IntroToolRepository, IntroToolService},
 };

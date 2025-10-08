@@ -4,14 +4,12 @@ use axum::{
 };
 
 use crate::{
-    htmx::{Build, HtmxBuilder, Tag},
-    lib::{
-        domain::intro_tool::{
-            models::guild::{ChannelName, GuildRef, Intro, User},
-            ports::IntroToolService,
-        },
-        inbound::{http::ApiState, response::ErrorAsRedirect},
+    domain::intro_tool::{
+        models::guild::{ChannelName, GuildRef, Intro, User},
+        ports::IntroToolService,
     },
+    htmx::{Build, HtmxBuilder, Tag},
+    inbound::{http::ApiState, response::ErrorAsRedirect},
 };
 
 pub async fn home<S: IntroToolService>(

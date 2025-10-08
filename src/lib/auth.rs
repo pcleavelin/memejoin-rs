@@ -1,9 +1,15 @@
+#[derive(Clone)]
+pub struct DiscordSecret {
+    pub client_id: String,
+    pub client_secret: String,
+    pub bot_token: String,
+}
+
+/*
 use std::str::FromStr;
 
 use enum_iterator::Sequence;
 use serde::{Deserialize, Serialize};
-
-use crate::routes::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Discord {
@@ -12,13 +18,6 @@ pub(crate) struct Discord {
     pub(crate) expires_in: usize,
     pub(crate) refresh_token: String,
     pub(crate) scope: String,
-}
-
-#[derive(Clone)]
-pub(crate) struct DiscordSecret {
-    pub(crate) client_id: String,
-    pub(crate) client_secret: String,
-    pub(crate) bot_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,3 +142,4 @@ impl FromStr for Permission {
         }
     }
 }
+*/

@@ -1,36 +1,42 @@
-use anyhow::{anyhow, Context};
 use uuid::Uuid;
 
-use crate::{
-    lib::domain::intro_tool::{
-        models::guild::{self, GetUserError, GuildId, IntroId, User},
-        ports::{IntroToolRepository, IntroToolService},
-    },
-    media,
+use crate::domain::intro_tool::{
+    models::guild::{self, GetUserError, GuildId, IntroId, User},
+    ports::{IntroToolRepository, IntroToolService, LocalAudioFetcher, RemoteAudioFetcher},
 };
 
-use super::models;
-
 #[derive(Clone)]
-pub struct Service<R>
+pub struct Service<R, RA, LA>
 where
     R: IntroToolRepository,
+    RA: RemoteAudioFetcher,
+    LA: LocalAudioFetcher,
 {
     repo: R,
+    remote_audio_fetcher: RA,
+    local_audio_fetcher: LA,
 }
 
-impl<R> Service<R>
+impl<R, RA, LA> Service<R, RA, LA>
 where
     R: IntroToolRepository,
+    RA: RemoteAudioFetcher,
+    LA: LocalAudioFetcher,
 {
-    pub fn new(repo: R) -> Self {
-        Self { repo }
+    pub fn new(repo: R, remote_audio_fetcher: RA, local_audio_fetcher: LA) -> Self {
+        Self {
+            repo,
+            remote_audio_fetcher,
+            local_audio_fetcher,
+        }
     }
 }
 
-impl<R> IntroToolService for Service<R>
+impl<R, RA, LA> IntroToolService for Service<R, RA, LA>
 where
     R: IntroToolRepository,
+    RA: RemoteAudioFetcher,
+    LA: LocalAudioFetcher,
 {
     async fn needs_setup(&self) -> bool {
         let Ok(guild_count) = self.repo.get_guild_count().await else {
@@ -102,42 +108,14 @@ where
     ) -> Result<IntroId, guild::AddIntroToGuildError> {
         let file_name = match &req.data {
             guild::IntroRequestData::Data(bytes) => {
-                // TODO: put this behind an interface
-                let uuid = Uuid::new_v4().to_string();
-                let temp_path = format!("./sounds/temp/{uuid}");
-                let dest_path = format!("./sounds/{uuid}.mp3");
-
-                // Write original file so its ready for codec conversion
-                std::fs::write(&temp_path, bytes).context("failed to write temp file")?;
-                media::normalize(&temp_path, &dest_path)
-                    .await
-                    .context("failed to normalize file")?;
-                std::fs::remove_file(&temp_path).context("failed to remove temp file")?;
-
-                dest_path
+                self.local_audio_fetcher
+                    .save_local_audio(bytes, Uuid::new_v4().to_string().as_str())
+                    .await?
             }
             guild::IntroRequestData::Url(url) => {
-                let uuid = Uuid::new_v4().to_string();
-                let file_name = format!("sounds/{uuid}");
-
-                // TODO: put this behind an interface
-                let child = tokio::process::Command::new("yt-dlp")
-                    .arg(url)
-                    .args(["-o", &file_name])
-                    .args(["-x", "--audio-format", "mp3"])
-                    .spawn()
-                    .context("failed to spawn yt-dlp process")?
-                    .wait()
-                    .await
-                    .context("yt-dlp process failed")?;
-
-                if !child.success() {
-                    return Err(guild::AddIntroToGuildError::Unknown(anyhow!(
-                        "yt-dlp terminated unsuccessfully"
-                    )));
-                }
-
-                file_name
+                self.remote_audio_fetcher
+                    .fetch_remote_audio(url, Uuid::new_v4().to_string().as_str())
+                    .await?
             }
         };
 
