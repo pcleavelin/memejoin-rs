@@ -1,8 +1,19 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Clone)]
 pub struct DiscordSecret {
     pub client_id: String,
     pub client_secret: String,
     pub bot_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct Discord {
+    pub(crate) access_token: String,
+    pub(crate) token_type: String,
+    pub(crate) expires_in: usize,
+    pub(crate) refresh_token: String,
+    pub(crate) scope: String,
 }
 
 /*

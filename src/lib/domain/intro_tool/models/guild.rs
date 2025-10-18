@@ -1,13 +1,18 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use chrono::NaiveDateTime;
 use thiserror::Error;
+
+use crate::domain::intro_tool::ports::AuthService;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ApiToken(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GuildId(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ExternalGuildId(u64);
+pub struct ExternalGuildId(pub u64);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UserName(String);
@@ -17,6 +22,18 @@ pub struct ChannelName(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IntroId(i32);
+
+impl From<ApiToken> for Cow<'_, str> {
+    fn from(value: ApiToken) -> Self {
+        Cow::Owned(value.0)
+    }
+}
+
+impl From<String> for ApiToken {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
 
 impl From<u64> for GuildId {
     fn from(id: u64) -> Self {
@@ -108,6 +125,10 @@ impl GuildRef {
     pub fn name(&self) -> &str {
         &self.name
     }
+
+    pub fn external_id(&self) -> ExternalGuildId {
+        self.external_id
+    }
 }
 
 impl GuildRef {
@@ -198,6 +219,10 @@ impl User {
         &self.channel_intros
     }
 
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     pub fn api_key_expires_at(&self) -> NaiveDateTime {
         self.api_key_expires_at
     }
@@ -255,18 +280,18 @@ impl Intro {
 }
 
 pub struct CreateGuildRequest {
-    name: String,
-    sound_delay: u32,
-    external_id: ExternalGuildId,
+    pub name: String,
+    pub sound_delay: u32,
+    pub external_id: ExternalGuildId,
 }
 
 pub struct CreateUserRequest {
-    user: UserName,
+    pub user: UserName,
 }
 
 pub struct CreateChannelRequest {
-    guild_id: GuildId,
-    channel_name: ChannelName,
+    pub guild_id: GuildId,
+    pub channel_name: ChannelName,
 }
 
 pub struct AddIntroToGuildRequest {
@@ -297,12 +322,21 @@ pub enum CreateGuildError {
 
 #[derive(Debug, Error)]
 pub enum CreateUserError {
+    #[error("Could not get user")]
+    CouldNotGetUser(#[from] GetUserError),
+
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),
 }
 
 #[derive(Debug, Error)]
 pub enum CreateChannelError {
+    #[error(transparent)]
+    Unknown(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum AddUserToGuildError {
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),
 }
@@ -362,6 +396,30 @@ pub enum GetChannelError {
 pub enum GetIntroError {
     #[error("Intro not found")]
     NotFound,
+
+    #[error(transparent)]
+    Unknown(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum AutheticateUserError<A: AuthService> {
+    #[error("Could not fetch guild")]
+    CouldNotFetchGuild(#[from] GetGuildError),
+
+    #[error("Could not create user")]
+    CouldNotCreateUser(#[from] CreateUserError),
+
+    #[error("Could not fetch guild user")]
+    CouldNotFetchUser(#[from] GetUserError),
+
+    #[error("Could not add user to guild")]
+    CouldNotAddUserToGuild(#[from] AddUserToGuildError),
+
+    #[error("User not part of instance's guilds")]
+    UserNotPartOfInstanceGuilds,
+
+    #[error("Error authenticating user")]
+    ExternalError(A::Error),
 
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),

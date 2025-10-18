@@ -63,6 +63,7 @@ pub enum Tag {
     Header6,
     Strong,
     Paragraph,
+    Blockquote,
     JustText,
 }
 
@@ -125,6 +126,7 @@ impl Tag {
             Self::Header6 => "h6",
             Self::Strong => "strong",
             Self::Paragraph => "paragraph",
+            Self::Blockquote => "blockquote",
         }
     }
 

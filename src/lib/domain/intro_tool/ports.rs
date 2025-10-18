@@ -1,21 +1,31 @@
 use std::{collections::HashMap, future::Future};
 
-use crate::domain::intro_tool::models::guild::{ChannelName, IntroId};
+use chrono::NaiveDateTime;
+
+use crate::domain::intro_tool::models::guild::{
+    AddUserToGuildError, AutheticateUserError, ExternalGuildId, UserName,
+};
 
 use super::models::guild::{
     AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserError, AddIntroToUserRequest,
-    Channel, CreateChannelError, CreateChannelRequest, CreateGuildError, CreateGuildRequest,
-    CreateUserError, CreateUserRequest, GetChannelError, GetGuildError, GetIntroError,
-    GetUserError, Guild, GuildId, GuildRef, Intro, User,
+    ApiToken, Channel, ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,
+    CreateGuildRequest, CreateUserError, CreateUserRequest, GetChannelError, GetGuildError,
+    GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId, User,
 };
 
 pub trait IntroToolService: Send + Sync + Clone + 'static {
     fn needs_setup(&self) -> impl Future<Output = bool> + Send;
 
+    fn authenticate_user<A: AuthService>(
+        &self,
+        params: A::Params,
+    ) -> impl Future<Output = Result<ApiToken, AutheticateUserError<A>>> + Send;
+
     fn get_guild(
         &self,
         guild_id: impl Into<GuildId> + Send,
     ) -> impl Future<Output = Result<Guild, GetGuildError>> + Send;
+    fn get_guilds(&self) -> impl Future<Output = Result<Vec<GuildRef>, GetGuildError>> + Send;
     fn get_guild_users(
         &self,
         guild_id: GuildId,
@@ -42,8 +52,24 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         req: AddIntroToUserRequest,
     ) -> impl Future<Output = Result<(), AddIntroToUserError>> + Send;
 
+    fn refresh_user_token(
+        &self,
+        username: &str,
+    ) -> impl Future<Output = Result<String, GetUserError>> + Send;
+
     async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
-    async fn create_user(&self, req: CreateUserRequest) -> Result<User, CreateUserError>;
+
+    fn create_user(
+        &self,
+        req: CreateUserRequest,
+    ) -> impl Future<Output = Result<User, CreateUserError>> + Send;
+
+    fn add_user_to_guild(
+        &self,
+        guild_id: GuildId,
+        username: &str,
+    ) -> impl Future<Output = Result<(), AddUserToGuildError>> + Send;
+
     async fn create_channel(
         &self,
         req: CreateChannelRequest,
@@ -60,6 +86,7 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         &self,
         guild_id: GuildId,
     ) -> impl Future<Output = Result<Guild, GetGuildError>> + Send;
+    fn get_guilds(&self) -> impl Future<Output = Result<Vec<GuildRef>, GetGuildError>> + Send;
     fn get_guild_count(&self) -> impl Future<Output = Result<usize, GetGuildError>> + Send;
 
     fn get_guild_users(
@@ -97,13 +124,31 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         api_key: &str,
     ) -> impl Future<Output = Result<User, GetUserError>> + Send;
 
+    fn set_user_api_key(
+        &self,
+        username: &str,
+        api_key: &str,
+        expires_at: NaiveDateTime,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
+
     fn set_user_intro(
         &self,
         req: AddIntroToUserRequest,
     ) -> impl Future<Output = Result<(), AddIntroToUserError>> + Send;
 
     async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
-    async fn create_user(&self, req: CreateUserRequest) -> Result<User, CreateUserError>;
+
+    fn create_user(
+        &self,
+        req: CreateUserRequest,
+    ) -> impl Future<Output = Result<(), CreateUserError>> + Send;
+
+    fn add_user_to_guild(
+        &self,
+        guild_id: GuildId,
+        username: &str,
+    ) -> impl Future<Output = Result<(), AddUserToGuildError>> + Send;
+
     async fn create_channel(
         &self,
         req: CreateChannelRequest,
@@ -115,6 +160,21 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         guild_id: GuildId,
         filename: String,
     ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
+}
+
+pub trait ExternalUser: Send + Sync + Clone + 'static {
+    fn external_token(&self) -> &str;
+    fn username(&self) -> UserName;
+    fn guilds(&self) -> impl Iterator<Item = ExternalGuildId>;
+}
+pub trait AuthService: Send + Sync + Clone + 'static {
+    type Params: Send;
+    type User: ExternalUser + Send;
+    type Error: std::error::Error + Send;
+
+    fn authenticate_user(
+        params: Self::Params,
+    ) -> impl Future<Output = Result<Self::User, Self::Error>> + Send;
 }
 
 pub trait RemoteAudioFetcher: Send + Sync + Clone + 'static {

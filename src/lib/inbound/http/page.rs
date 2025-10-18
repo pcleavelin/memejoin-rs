@@ -1,15 +1,25 @@
+use std::collections::HashMap;
+
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{Html, Redirect},
 };
+use axum_extra::extract::{CookieJar, cookie::Cookie};
+use reqwest::Url;
+use serde::{Deserialize, Deserializer};
 
 use crate::{
+    auth,
     domain::intro_tool::{
         models::guild::{ChannelName, GuildRef, Intro, User},
         ports::IntroToolService,
     },
     htmx::{Build, HtmxBuilder, Tag},
-    inbound::{http::ApiState, response::ErrorAsRedirect},
+    inbound::{
+        http::ApiState,
+        response::{ApiError, ErrorAsRedirect, PageError},
+    },
+    outbound::discord::{DiscordAuthParams, DiscordService},
 };
 
 pub async fn home<S: IntroToolService>(
@@ -22,7 +32,7 @@ pub async fn home<S: IntroToolService>(
             .intro_tool_service
             .get_user_guilds(user.name())
             .await
-            .as_redirect(&state.origin, "/login")?;
+            .as_redirect(&state.origin, "login")?;
 
         // TODO: get user app permissions
         // TODO: check if user can add guilds
@@ -78,7 +88,10 @@ pub async fn login<S: IntroToolService>(
     if user.is_some() {
         Err(Redirect::to(&format!("{}/", state.origin)))
     } else {
-        let authorize_uri = format!("https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}/v2/auth&response_type=code&scope=guilds.members.read+guilds+identify", state.secrets.client_id, state.origin);
+        let authorize_uri = format!(
+            "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}/v2/auth&response_type=code&scope=guilds.members.read+guilds+identify",
+            state.secrets.client_id, state.origin
+        );
 
         Ok(Html(
             HtmxBuilder::new(Tag::Html)
@@ -111,17 +124,17 @@ pub async fn guild_dashboard<S: IntroToolService>(
         .intro_tool_service
         .get_guild(guild_id)
         .await
-        .as_redirect(&state.origin, "/login")?;
+        .as_redirect(&state.origin, "login")?;
     let user_guilds = state
         .intro_tool_service
         .get_user_guilds(user.name())
         .await
-        .as_redirect(&state.origin, "/login")?;
+        .as_redirect(&state.origin, "login")?;
     let guild_intros = state
         .intro_tool_service
         .get_guild_intros(guild_id.into())
         .await
-        .as_redirect(&state.origin, "/login")?;
+        .as_redirect(&state.origin, "login")?;
 
     // does user have access to this guild
     if !user_guilds
@@ -213,7 +226,38 @@ pub async fn guild_dashboard<S: IntroToolService>(
     ))
 }
 
-fn page_header(title: &str) -> HtmxBuilder {
+pub async fn auth<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Query(params): Query<HashMap<String, String>>,
+    jar: CookieJar,
+) -> Result<(CookieJar, Redirect), PageError> {
+    let Some(code) = params.get("code") else {
+        return Err(ApiError::bad_request("no code").into());
+    };
+
+    tracing::info!("attempting to get access token with code {}", code);
+
+    let token = state
+        .intro_tool_service
+        // TODO: decoulple discord from HTTP server
+        .authenticate_user::<DiscordService>(DiscordAuthParams {
+            origin: state.origin.clone(),
+            code: code.clone(),
+            client_id: state.secrets.client_id.clone(),
+            client_secret: state.secrets.client_secret.clone(),
+        })
+        .await
+        .map_err(ApiError::from)?;
+    let uri = Url::parse(&state.origin).expect("should be a valid url");
+
+    let mut cookie = Cookie::new("access_token", token);
+    cookie.set_path(uri.path().to_string());
+    cookie.set_secure(true);
+
+    Ok((jar.add(cookie), Redirect::to(&format!("{}/", state.origin))))
+}
+
+pub fn page_header(title: &str) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Html).head(|b| {
         b.title(title)
             .script(

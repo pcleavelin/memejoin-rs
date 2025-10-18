@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use iter_tools::Itertools;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
@@ -63,6 +64,39 @@ impl IntroToolRepository for Sqlite {
             .with_channels(self.get_guild_channels(guild_id).await?))
     }
 
+    async fn get_guilds(&self) -> Result<Vec<GuildRef>, GetGuildError> {
+        let conn = self.conn.lock().await;
+
+        let mut query = conn
+            .prepare(
+                "
+                SELECT
+                    Guild.id,
+                    Guild.name,
+                    Guild.sound_delay
+                FROM Guild
+                LEFT JOIN UserGuild ON Guild.id = UserGuild.guild_id
+                LEFT JOIN User ON User.username = UserGuild.username
+                ",
+            )
+            .context("failed to prepare query")?;
+
+        let guilds = query
+            .query_map([], |row| {
+                Ok(GuildRef::new(
+                    row.get::<_, u64>(0)?.into(),
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get::<_, u64>(0)?.into(),
+                ))
+            })
+            .context("failed to map prepared query")?
+            .collect::<Result<_, _>>()
+            .context("failed to fetch guild user rows")?;
+
+        Ok(guilds)
+    }
+
     async fn get_guild_count(&self) -> Result<usize, GetGuildError> {
         let conn = self.conn.lock().await;
 
@@ -115,43 +149,6 @@ impl IntroToolRepository for Sqlite {
             .context("failed to fetch guild user rows")?;
 
         Ok(users)
-    }
-
-    async fn get_user_guilds(
-        &self,
-        username: impl AsRef<str>,
-    ) -> Result<Vec<GuildRef>, GetGuildError> {
-        let conn = self.conn.lock().await;
-
-        let mut query = conn
-            .prepare(
-                "
-                SELECT
-                    Guild.id,
-                    Guild.name,
-                    Guild.sound_delay
-                FROM Guild
-                LEFT JOIN UserGuild ON Guild.id = UserGuild.guild_id
-                LEFT JOIN User ON User.username = UserGuild.username
-                WHERE User.username = :username
-                ",
-            )
-            .context("failed to prepare query")?;
-
-        let guilds = query
-            .query_map(&[(":username", username.as_ref())], |row| {
-                Ok(GuildRef::new(
-                    row.get::<_, u64>(0)?.into(),
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get::<_, u64>(0)?.into(),
-                ))
-            })
-            .context("failed to map prepared query")?
-            .collect::<Result<_, _>>()
-            .context("failed to fetch guild user rows")?;
-
-        Ok(guilds)
     }
 
     async fn get_guild_channels(&self, guild_id: GuildId) -> Result<Vec<Channel>, GetChannelError> {
@@ -305,6 +302,43 @@ impl IntroToolRepository for Sqlite {
         Ok(intros)
     }
 
+    async fn get_user_guilds(
+        &self,
+        username: impl AsRef<str>,
+    ) -> Result<Vec<GuildRef>, GetGuildError> {
+        let conn = self.conn.lock().await;
+
+        let mut query = conn
+            .prepare(
+                "
+                SELECT
+                    Guild.id,
+                    Guild.name,
+                    Guild.sound_delay
+                FROM Guild
+                LEFT JOIN UserGuild ON Guild.id = UserGuild.guild_id
+                LEFT JOIN User ON User.username = UserGuild.username
+                WHERE User.username = :username
+                ",
+            )
+            .context("failed to prepare query")?;
+
+        let guilds = query
+            .query_map(&[(":username", username.as_ref())], |row| {
+                Ok(GuildRef::new(
+                    row.get::<_, u64>(0)?.into(),
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get::<_, u64>(0)?.into(),
+                ))
+            })
+            .context("failed to map prepared query")?
+            .collect::<Result<_, _>>()
+            .context("failed to fetch guild user rows")?;
+
+        Ok(guilds)
+    }
+
     async fn get_user_from_api_key(&self, api_key: &str) -> Result<User, GetUserError> {
         let username = {
             let conn = self.conn.lock().await;
@@ -330,12 +364,124 @@ impl IntroToolRepository for Sqlite {
         self.get_user(username).await
     }
 
-    async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError> {
-        todo!()
+    async fn set_user_api_key(
+        &self,
+        username: &str,
+        api_key: &str,
+        expires_at: NaiveDateTime,
+    ) -> Result<(), GetUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            UPDATE User
+            SET api_key = ?1, api_key_expires_at = ?2
+            WHERE username = ?3
+            ",
+            [api_key, &expires_at.to_string(), username],
+        )
+        .context("failed to update user api key")?;
+
+        Ok(())
     }
 
-    async fn create_user(&self, req: CreateUserRequest) -> Result<User, CreateUserError> {
-        todo!()
+    async fn set_user_intro(
+        &self,
+        req: AddIntroToUserRequest,
+    ) -> Result<(), guild::AddIntroToUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+                DELETE FROM UserIntro
+                WHERE username = ?1
+                AND guild_id = ?2
+                AND channel_name = ?3
+                ",
+            [
+                &req.user.to_string(),
+                &req.guild_id.to_string(),
+                &req.channel_name.to_string(),
+            ],
+        )
+        .context("failed to delete user intros")?;
+
+        conn.execute(
+            "
+                INSERT INTO
+                    UserIntro (username, guild_id, channel_name, intro_id)
+                VALUES (?1, ?2, ?3, ?4)",
+            [
+                &req.user.to_string(),
+                &req.guild_id.to_string(),
+                &req.channel_name.to_string(),
+                &req.intro_id.to_string(),
+            ],
+        )
+        .context("failed to insert user intro")?;
+
+        Ok(())
+    }
+
+    async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError> {
+        let conn = self.conn.lock().await;
+
+        let guild_id: GuildId = req.external_id.0.into();
+
+        conn.execute(
+            "
+            INSERT INTO
+                Guild (id, name, sound_delay)
+            VALUES (?1, ?2, ?3)
+            ",
+            [
+                &guild_id.to_string(),
+                &req.name,
+                &req.sound_delay.to_string(),
+            ],
+        )
+        .context("failed to insert guild")?;
+
+        Ok(Guild::new(
+            guild_id,
+            req.name,
+            req.sound_delay,
+            req.external_id,
+        ))
+    }
+
+    async fn create_user(&self, req: CreateUserRequest) -> Result<(), CreateUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            INSERT INTO
+                User (username)
+            VALUES (?1)
+            ",
+            [req.user.as_ref()],
+        )
+        .context("failed to insert user")?;
+
+        Ok(())
+    }
+
+    async fn add_user_to_guild(
+        &self,
+        guild_id: GuildId,
+        username: &str,
+    ) -> Result<(), guild::AddUserToGuildError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            INSERT OR IGNORE INTO UserGuild (username, guild_id) VALUES (?1, ?2)
+            ",
+            [username, &guild_id.to_string()],
+        )
+        .context("failed to insert user guild")?;
+
+        Ok(())
     }
 
     async fn create_channel(
@@ -388,43 +534,5 @@ impl IntroToolRepository for Sqlite {
             .context("failed to query row")?;
 
         Ok(intro_id)
-    }
-
-    async fn set_user_intro(
-        &self,
-        req: AddIntroToUserRequest,
-    ) -> Result<(), guild::AddIntroToUserError> {
-        let conn = self.conn.lock().await;
-
-        conn.execute(
-            "
-                DELETE FROM UserIntro
-                WHERE username = ?1
-                AND guild_id = ?2
-                AND channel_name = ?3
-                ",
-            [
-                &req.user.to_string(),
-                &req.guild_id.to_string(),
-                &req.channel_name.to_string(),
-            ],
-        )
-        .context("failed to delete user intros")?;
-
-        conn.execute(
-            "
-                INSERT INTO
-                    UserIntro (username, guild_id, channel_name, intro_id)
-                VALUES (?1, ?2, ?3, ?4)",
-            [
-                &req.user.to_string(),
-                &req.guild_id.to_string(),
-                &req.channel_name.to_string(),
-                &req.intro_id.to_string(),
-            ],
-        )
-        .context("failed to insert user intro")?;
-
-        Ok(())
     }
 }

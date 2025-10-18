@@ -1,5 +1,5 @@
 mod handlers;
-mod page;
+pub(super) mod page;
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -49,7 +49,9 @@ impl<S: IntroToolService> FromRequestParts<ApiState<S>> for User {
             {
                 Ok(user) => {
                     let now = Utc::now().naive_utc();
-                    if user.api_key_expires_at() < now || user.discord_token_expires_at() < now {
+                    if user.api_key_expires_at() < now {
+                        //|| user.discord_token_expires_at() < now {
+                        tracing::error!("user token expired at: {}", user.api_key_expires_at());
                         Err(Redirect::to(&format!("{}/login", state.origin)))
                     } else {
                         Ok(user)
@@ -125,6 +127,7 @@ where
             "/v2/intros/add/:guild_id/:channel",
             post(handlers::set_user_intro),
         )
+        .route("/v2/auth", get(page::auth))
 
     // .route("/guild/:guild_id/setup", get(routes::guild_setup))
     // .route(
@@ -135,7 +138,6 @@ where
     //     "/guild/:guild_id/permissions/update",
     //     post(routes::update_guild_permissions),
     // )
-    // .route("/v2/auth", get(routes::v2_auth))
     // .route(
     //     "/v2/intros/remove/:guild_id/:channel",
     //     post(routes::v2_remove_intro_from_user),

@@ -1,9 +1,18 @@
+use chrono::{Duration, Utc};
+use iter_tools::Itertools;
 use uuid::Uuid;
 
 use crate::domain::intro_tool::{
-    models::guild::{self, GetUserError, GuildId, IntroId, User},
-    ports::{IntroToolRepository, IntroToolService, LocalAudioFetcher, RemoteAudioFetcher},
+    models::guild::{
+        self, ApiToken, AutheticateUserError, CreateUserRequest, GetUserError, GuildId, IntroId,
+        User,
+    },
+    ports::{
+        ExternalUser, IntroToolRepository, IntroToolService, LocalAudioFetcher, RemoteAudioFetcher,
+    },
 };
+
+use super::ports::AuthService;
 
 #[derive(Clone)]
 pub struct Service<R, RA, LA>
@@ -46,6 +55,64 @@ where
         guild_count == 0
     }
 
+    async fn authenticate_user<A: AuthService>(
+        &self,
+        params: A::Params,
+    ) -> Result<ApiToken, AutheticateUserError<A>> {
+        let external_user = A::authenticate_user(params)
+            .await
+            .map_err(AutheticateUserError::ExternalError)?;
+
+        let guilds = self.get_guilds().await?;
+        let external_user_guilds = guilds
+            .iter()
+            .filter(|guild| external_user.guilds().contains(&guild.external_id()))
+            .collect::<Vec<_>>();
+
+        if external_user_guilds.is_empty() {
+            return Err(AutheticateUserError::UserNotPartOfInstanceGuilds);
+        }
+
+        let user = match self.get_user(external_user.username()).await {
+            Ok(user) => Some(user),
+            Err(GetUserError::NotFound) => None,
+
+            Err(err) => return Err(AutheticateUserError::CouldNotFetchUser(err)),
+        };
+
+        match user {
+            Some(user) => {
+                self.refresh_user_token(user.name()).await?;
+            }
+            None => {
+                self.create_user(CreateUserRequest {
+                    user: external_user.username().clone(),
+                })
+                .await?;
+            }
+        }
+
+        let user = self.get_user(external_user.username()).await?;
+        let user_guilds = self.get_user_guilds(user.name()).await?;
+
+        let guilds_to_add_user =
+            user_guilds
+                .iter()
+                .map(|guild| guild.id())
+                .filter(|user_guild_id| {
+                    external_user_guilds
+                        .iter()
+                        .map(|external_guild| external_guild.id())
+                        .contains(user_guild_id)
+                });
+
+        for guild in guilds_to_add_user {
+            self.add_user_to_guild(guild, user.name()).await?;
+        }
+
+        Ok(user.api_key().to_string().into())
+    }
+
     async fn get_guild(
         &self,
         guild_id: impl Into<GuildId>,
@@ -53,9 +120,14 @@ where
         self.repo.get_guild(guild_id.into()).await
     }
 
+    async fn get_guilds(&self) -> Result<Vec<guild::GuildRef>, guild::GetGuildError> {
+        self.repo.get_guilds().await
+    }
+
     async fn get_guild_users(&self, guild_id: GuildId) -> Result<Vec<User>, GetUserError> {
         self.repo.get_guild_users(guild_id).await
     }
+
     async fn get_guild_intros(
         &self,
         guild_id: GuildId,
@@ -81,6 +153,31 @@ where
         self.repo.get_user_from_api_key(api_key).await
     }
 
+    async fn set_user_intro(
+        &self,
+        req: guild::AddIntroToUserRequest,
+    ) -> Result<(), guild::AddIntroToUserError> {
+        self.repo.set_user_intro(req).await
+    }
+
+    async fn refresh_user_token(&self, username: &str) -> Result<String, GetUserError> {
+        let user = self.get_user(username).await?;
+
+        let user_token = if user.api_key_expires_at() >= Utc::now().naive_utc() {
+            user.api_key().to_string()
+        } else {
+            Uuid::new_v4().to_string()
+        };
+
+        let expires_at = Utc::now().naive_utc() + Duration::weeks(4);
+
+        self.repo
+            .set_user_api_key(username, &user_token, expires_at)
+            .await?;
+
+        Ok(user_token)
+    }
+
     async fn create_guild(
         &self,
         req: guild::CreateGuildRequest,
@@ -92,7 +189,19 @@ where
         &self,
         req: guild::CreateUserRequest,
     ) -> Result<guild::User, guild::CreateUserError> {
-        self.repo.create_user(req).await
+        let username = req.user.clone();
+
+        self.repo.create_user(req).await?;
+
+        Ok(self.get_user(username.as_ref()).await?)
+    }
+
+    async fn add_user_to_guild(
+        &self,
+        guild_id: GuildId,
+        username: &str,
+    ) -> Result<(), guild::AddUserToGuildError> {
+        self.repo.add_user_to_guild(guild_id, username).await
     }
 
     async fn create_channel(
@@ -122,12 +231,5 @@ where
         self.repo
             .add_intro_to_guild(&req.name, req.guild_id, file_name)
             .await
-    }
-
-    async fn set_user_intro(
-        &self,
-        req: guild::AddIntroToUserRequest,
-    ) -> Result<(), guild::AddIntroToUserError> {
-        self.repo.set_user_intro(req).await
     }
 }

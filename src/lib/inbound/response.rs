@@ -1,15 +1,23 @@
 use std::fmt::Debug;
 
 use axum::{
-    response::{IntoResponse, Redirect},
     Json,
+    response::{Html, IntoResponse, Redirect},
 };
 use reqwest::StatusCode;
 use serde::Serialize;
 
-use crate::domain::intro_tool::models::guild::{
-    AddIntroToGuildError, AddIntroToUserError, GetChannelError, GetGuildError, GetIntroError,
-    GetUserError,
+use crate::{
+    domain::intro_tool::{
+        models::guild::{
+            AddIntroToGuildError, AddIntroToUserError, AddUserToGuildError, AutheticateUserError,
+            CreateUserError, GetChannelError, GetGuildError, GetIntroError, GetUserError,
+        },
+        ports::AuthService,
+    },
+    htmx::{Build, HtmxBuilder, Tag},
+    inbound::http::page::page_header,
+    outbound::discord::DiscordError,
 };
 
 pub(super) trait ErrorAsRedirect<T>: Sized {
@@ -70,6 +78,32 @@ impl<T: Debug> ErrorAsRedirect<T> for Result<T, GetIntroError> {
     }
 }
 
+pub(super) struct PageError(pub ApiError);
+
+impl IntoResponse for PageError {
+    fn into_response(self) -> axum::response::Response {
+        Html(
+            page_header("MemeJoin - Error")
+                .builder(Tag::Div, |b| {
+                    b.attribute("class", "container")
+                        .builder_text(
+                            Tag::Header2,
+                            &format!("Uh oh! - Status Code {}", self.0.status_code()),
+                        )
+                        .builder(Tag::Blockquote, |b| b.text(self.0.message()))
+                        .builder(Tag::Empty, |b| b.text("<br/>"))
+                        .builder(Tag::Anchor, |b| {
+                            b.attribute("role", "button")
+                                .text("Go Back")
+                                .attribute("href", "/")
+                        })
+                })
+                .build(),
+        )
+        .into_response()
+    }
+}
+
 pub(super) struct ApiResponse<T: Serialize>(StatusCode, Json<T>);
 
 #[derive(Serialize, Debug)]
@@ -97,6 +131,15 @@ impl ApiError {
             ApiError::BadRequest { .. } => StatusCode::BAD_REQUEST,
             ApiError::Forbidden { .. } => StatusCode::FORBIDDEN,
             ApiError::InternalServerError { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    fn message(&self) -> &str {
+        match self {
+            ApiError::NotFound { message } => message,
+            ApiError::BadRequest { message } => message,
+            ApiError::Forbidden { message } => message,
+            ApiError::InternalServerError { message } => message,
         }
     }
 
@@ -130,6 +173,12 @@ impl IntoResponse for ApiError {
         tracing::error!(err = ?self, "error");
 
         (self.status_code(), Json(self)).into_response()
+    }
+}
+
+impl From<ApiError> for PageError {
+    fn from(value: ApiError) -> Self {
+        Self(value)
     }
 }
 
@@ -213,5 +262,77 @@ impl From<GetIntroError> for ApiError {
                 Self::internal(error.to_string())
             }
         }
+    }
+}
+
+impl From<CreateUserError> for ApiError {
+    fn from(value: CreateUserError) -> Self {
+        match value {
+            CreateUserError::CouldNotGetUser(err) => err.into(),
+            CreateUserError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<AddUserToGuildError> for ApiError {
+    fn from(value: AddUserToGuildError) -> Self {
+        match value {
+            AddUserToGuildError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl<A: AuthService> From<AutheticateUserError<A>> for ApiError
+where
+    <A as AuthService>::Error: Into<ApiError>,
+{
+    fn from(value: AutheticateUserError<A>) -> Self {
+        match value {
+            AutheticateUserError::CouldNotFetchGuild(err) => err.into(),
+            AutheticateUserError::CouldNotCreateUser(err) => err.into(),
+            AutheticateUserError::CouldNotFetchUser(err) => err.into(),
+            AutheticateUserError::CouldNotAddUserToGuild(err) => err.into(),
+            AutheticateUserError::UserNotPartOfInstanceGuilds => {
+                Self::internal("User not part of instance guilds")
+            }
+            AutheticateUserError::ExternalError(err) => err.into(),
+            AutheticateUserError::Unknown(err) => {
+                tracing::error!(err = ?err, "unknown error");
+
+                Self::internal(err.to_string())
+            }
+        }
+    }
+}
+
+impl From<DiscordError> for ApiError {
+    fn from(value: DiscordError) -> Self {
+        match value {
+            DiscordError::ApiRequest(error) => {
+                tracing::error!(err = ?error, "api request error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<reqwest::Error> for ApiError {
+    fn from(value: reqwest::Error) -> Self {
+        Self::internal(format!("error making request to external service: {value}",))
+    }
+}
+
+impl From<anyhow::Error> for ApiError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::internal(format!("unknown error: {value}",))
     }
 }
