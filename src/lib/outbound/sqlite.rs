@@ -390,10 +390,41 @@ impl IntroToolRepository for Sqlite {
         Ok(intro_id)
     }
 
-    async fn add_intro_to_user(
+    async fn set_user_intro(
         &self,
         req: AddIntroToUserRequest,
     ) -> Result<(), guild::AddIntroToUserError> {
-        todo!()
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+                DELETE FROM UserIntro
+                WHERE username = ?1
+                AND guild_id = ?2
+                AND channel_name = ?3
+                ",
+            [
+                &req.user.to_string(),
+                &req.guild_id.to_string(),
+                &req.channel_name.to_string(),
+            ],
+        )
+        .context("failed to delete user intros")?;
+
+        conn.execute(
+            "
+                INSERT INTO
+                    UserIntro (username, guild_id, channel_name, intro_id)
+                VALUES (?1, ?2, ?3, ?4)",
+            [
+                &req.user.to_string(),
+                &req.guild_id.to_string(),
+                &req.channel_name.to_string(),
+                &req.intro_id.to_string(),
+            ],
+        )
+        .context("failed to insert user intro")?;
+
+        Ok(())
     }
 }

@@ -121,6 +121,10 @@ where
             "/v2/intros/:guild/upload",
             post(handlers::upload_guild_intro),
         )
+        .route(
+            "/v2/intros/add/:guild_id/:channel",
+            post(handlers::set_user_intro),
+        )
 
     // .route("/guild/:guild_id/setup", get(routes::guild_setup))
     // .route(
@@ -132,10 +136,6 @@ where
     //     post(routes::update_guild_permissions),
     // )
     // .route("/v2/auth", get(routes::v2_auth))
-    // .route(
-    //     "/v2/intros/add/:guild_id/:channel",
-    //     post(routes::v2_add_intro_to_user),
-    // )
     // .route(
     //     "/v2/intros/remove/:guild_id/:channel",
     //     post(routes::v2_remove_intro_from_user),

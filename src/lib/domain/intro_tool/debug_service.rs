@@ -116,10 +116,10 @@ where
         self.wrapped_service.add_intro_to_guild(req).await
     }
 
-    async fn add_intro_to_user(
+    async fn set_user_intro(
         &self,
         req: models::guild::AddIntroToUserRequest,
     ) -> Result<(), models::guild::AddIntroToUserError> {
-        self.wrapped_service.add_intro_to_user(req).await
+        self.wrapped_service.set_user_intro(req).await
     }
 }

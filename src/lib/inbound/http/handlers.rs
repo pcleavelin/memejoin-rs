@@ -3,15 +3,20 @@ use std::collections::HashMap;
 use axum::{
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, HeaderValue},
+    response::Html,
 };
 
 use crate::{
     domain::intro_tool::{
-        models::guild::{AddIntroToGuildRequest, GuildId, IntroRequestData, User},
+        models::guild::{
+            AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, GuildId, IntroRequestData,
+            User, UserName,
+        },
         ports::IntroToolService,
     },
+    htmx::Build,
     inbound::{
-        http::ApiState,
+        http::{page, ApiState},
         response::{ApiError, ErrorAsRedirect},
     },
 };
@@ -102,6 +107,31 @@ impl FromApi<Multipart, GuildId> for AddIntroToGuildRequest {
     }
 }
 
+impl FromApi<Multipart, (GuildId, UserName, ChannelName)> for AddIntroToUserRequest {
+    async fn from_api(
+        mut value: Multipart,
+        (guild_id, user, channel_name): (GuildId, UserName, ChannelName),
+    ) -> Result<Self, ApiError> {
+        let intro_id = value
+            .next_field()
+            .await
+            .map_err(|err| ApiError::bad_request(format!("expected intro id: {err:?}")))?
+            .ok_or(ApiError::bad_request("intro id is required"))?
+            .name()
+            .ok_or(ApiError::bad_request("intro id is required"))?
+            .parse::<i32>()
+            .map_err(|err| ApiError::bad_request(format!("invalid intro id: {err:?}")))?
+            .into();
+
+        Ok(Self {
+            user,
+            guild_id,
+            channel_name,
+            intro_id,
+        })
+    }
+}
+
 pub(super) async fn add_guild_intro<S: IntroToolService>(
     State(state): State<ApiState<S>>,
     Path(guild_id): Path<u64>,
@@ -164,4 +194,61 @@ pub(super) async fn upload_guild_intro<S: IntroToolService>(
     headers.insert("HX-Refresh", HeaderValue::from_static("true"));
 
     Ok(headers)
+}
+
+pub(super) async fn set_user_intro<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path((guild_id, channel)): Path<(u64, String)>,
+    user: User,
+    form_data: Multipart,
+) -> Result<Html<String>, ApiError> {
+    let req = form_data
+        .into_domain((
+            guild_id.into(),
+            user.name().to_string().into(),
+            channel.clone().into(),
+        ))
+        .await?;
+
+    let guild = state.intro_tool_service.get_guild(guild_id).await?;
+    let user_guilds = state
+        .intro_tool_service
+        .get_user_guilds(user.name())
+        .await?;
+
+    // does user have access to this guild
+    if !user_guilds
+        .iter()
+        .any(|guild_ref| guild_ref.id() == guild.id())
+    {
+        return Err(ApiError::forbidden(
+            "You do not have access to this guild".to_string(),
+        ));
+    }
+
+    // TODO: check if channel exists
+
+    state.intro_tool_service.set_user_intro(req).await?;
+    let user = state.intro_tool_service.get_user(user.name()).await?;
+
+    let guild_intros = state
+        .intro_tool_service
+        .get_guild_intros(guild_id.into())
+        .await?;
+    let intros = user
+        .intros()
+        .get(&(guild.id(), channel.clone().into()))
+        .map(|intros| intros.iter())
+        .unwrap_or_default();
+
+    Ok(Html(
+        page::channel_intro_selector(
+            &state.origin,
+            guild_id,
+            &channel.into(),
+            intros,
+            guild_intros.iter(),
+        )
+        .build(),
+    ))
 }

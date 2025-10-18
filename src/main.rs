@@ -274,6 +274,8 @@ async fn main() -> std::io::Result<()> {
     dotenv::dotenv().ok();
     tracing_subscriber::fmt::init();
 
+    tracing::info!("tracing initialized");
+
     let secrets = auth::DiscordSecret {
         client_id: env::var("DISCORD_CLIENT_ID").expect("expected DISCORD_CLIENT_ID env var"),
         client_secret: env::var("DISCORD_CLIENT_SECRET")

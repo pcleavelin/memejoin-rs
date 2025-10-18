@@ -66,6 +66,18 @@ impl std::fmt::Display for GuildId {
     }
 }
 
+impl std::fmt::Display for UserName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::fmt::Display for ChannelName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl std::fmt::Display for IntroId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -271,10 +283,10 @@ pub enum IntroRequestData {
 }
 
 pub struct AddIntroToUserRequest {
-    user: UserName,
-    guild_id: GuildId,
-    channel_name: ChannelName,
-    intro_id: IntroId,
+    pub user: UserName,
+    pub guild_id: GuildId,
+    pub channel_name: ChannelName,
+    pub intro_id: IntroId,
 }
 
 #[derive(Debug, Error)]

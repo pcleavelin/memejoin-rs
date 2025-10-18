@@ -37,6 +37,11 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         api_key: &str,
     ) -> impl Future<Output = Result<User, GetUserError>> + Send;
 
+    fn set_user_intro(
+        &self,
+        req: AddIntroToUserRequest,
+    ) -> impl Future<Output = Result<(), AddIntroToUserError>> + Send;
+
     async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
     async fn create_user(&self, req: CreateUserRequest) -> Result<User, CreateUserError>;
     async fn create_channel(
@@ -48,11 +53,6 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         req: AddIntroToGuildRequest,
     ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
-
-    async fn add_intro_to_user(
-        &self,
-        req: AddIntroToUserRequest,
-    ) -> Result<(), AddIntroToUserError>;
 }
 
 pub trait IntroToolRepository: Send + Sync + Clone + 'static {
@@ -97,6 +97,11 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         api_key: &str,
     ) -> impl Future<Output = Result<User, GetUserError>> + Send;
 
+    fn set_user_intro(
+        &self,
+        req: AddIntroToUserRequest,
+    ) -> impl Future<Output = Result<(), AddIntroToUserError>> + Send;
+
     async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
     async fn create_user(&self, req: CreateUserRequest) -> Result<User, CreateUserError>;
     async fn create_channel(
@@ -110,11 +115,6 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         guild_id: GuildId,
         filename: String,
     ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
-
-    async fn add_intro_to_user(
-        &self,
-        req: AddIntroToUserRequest,
-    ) -> Result<(), AddIntroToUserError>;
 }
 
 pub trait RemoteAudioFetcher: Send + Sync + Clone + 'static {

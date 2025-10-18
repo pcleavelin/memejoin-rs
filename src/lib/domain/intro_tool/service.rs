@@ -124,10 +124,10 @@ where
             .await
     }
 
-    async fn add_intro_to_user(
+    async fn set_user_intro(
         &self,
         req: guild::AddIntroToUserRequest,
     ) -> Result<(), guild::AddIntroToUserError> {
-        self.repo.add_intro_to_user(req).await
+        self.repo.set_user_intro(req).await
     }
 }

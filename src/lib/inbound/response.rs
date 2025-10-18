@@ -8,7 +8,8 @@ use reqwest::StatusCode;
 use serde::Serialize;
 
 use crate::domain::intro_tool::models::guild::{
-    AddIntroToGuildError, GetChannelError, GetGuildError, GetIntroError,
+    AddIntroToGuildError, AddIntroToUserError, GetChannelError, GetGuildError, GetIntroError,
+    GetUserError,
 };
 
 pub(super) trait ErrorAsRedirect<T>: Sized {
@@ -126,6 +127,8 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        tracing::error!(err = ?self, "error");
+
         (self.status_code(), Json(self)).into_response()
     }
 }
@@ -153,10 +156,58 @@ impl From<GetGuildError> for ApiError {
     }
 }
 
+impl From<GetUserError> for ApiError {
+    fn from(value: GetUserError) -> Self {
+        match value {
+            GetUserError::NotFound => Self::not_found("User not found"),
+            GetUserError::CouldNotFetchGuilds(get_guild_error) => {
+                tracing::error!(err = ?get_guild_error, "could not fetch guilds from user");
+
+                Self::internal("Could not fetch guilds from user".to_string())
+            }
+            GetUserError::CouldNotFetchChannelIntros(get_channel_intro_error) => {
+                tracing::error!(err = ?get_channel_intro_error, "could not fetch channel intros from user");
+
+                Self::internal("Could not fetch channel intros from user".to_string())
+            }
+            GetUserError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
 impl From<AddIntroToGuildError> for ApiError {
     fn from(value: AddIntroToGuildError) -> Self {
         match value {
             AddIntroToGuildError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<AddIntroToUserError> for ApiError {
+    fn from(value: AddIntroToUserError) -> Self {
+        match value {
+            AddIntroToUserError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<GetIntroError> for ApiError {
+    fn from(value: GetIntroError) -> Self {
+        match value {
+            GetIntroError::NotFound => Self::not_found("Intro not found"),
+            GetIntroError::Unknown(error) => {
                 tracing::error!(err = ?error, "unknown error");
 
                 Self::internal(error.to_string())
