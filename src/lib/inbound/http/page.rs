@@ -9,9 +9,11 @@ use reqwest::Url;
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    auth,
+    auth::{self, AppPermission},
     domain::intro_tool::{
-        models::guild::{ChannelName, GuildRef, Intro, User},
+        models::guild::{
+            ChannelName, ExternalGuild, ExternalGuildId, GuildId, GuildRef, Intro, User,
+        },
         ports::IntroToolService,
     },
     htmx::{Build, HtmxBuilder, Tag},
@@ -34,21 +36,32 @@ pub async fn home<S: IntroToolService>(
             .await
             .as_redirect(&state.origin, "login")?;
 
-        // TODO: get user app permissions
-        // TODO: check if user can add guilds
-        // TODO: fetch guilds from discord
+        let can_add_guild = user.permissions().can(AppPermission::AddGuild);
 
-        let can_add_guild = false;
-        let discord_guilds: Vec<GuildRef> = vec![];
+        let discord_guilds: Vec<ExternalGuild> = if can_add_guild {
+            state
+                .intro_tool_service
+                .get_user_external_guilds::<DiscordService>(user.external_token().to_string())
+                .await
+                .inspect_err(|err| tracing::error!(?err, "failed to get user external guilds"))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|external_guilds| {
+                    !user_guilds
+                        .iter()
+                        .any(|g| g.id() == external_guilds.id.0.into())
+                })
+                .collect()
+        } else {
+            vec![]
+        };
 
         let guild_list = if needs_setup {
-            // TODO:
-            // HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
-            //     b.attribute("class", "container")
-            //         .builder_text(Tag::Header2, "Select a Guild to setup")
-            //         .push_builder(setup_guild_list(&state.origin, &discord_guilds))
-            // })
-            todo!()
+            HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
+                b.attribute("class", "container")
+                    .builder_text(Tag::Header2, "Select a Guild to setup")
+                    .push_builder(setup_guild_list(&state.origin, &discord_guilds))
+            })
         } else {
             HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
                 b.attribute("class", "container")
@@ -60,19 +73,19 @@ pub async fn home<S: IntroToolService>(
         Ok(Html(
             page_header("MemeJoin - Home")
                 .builder(Tag::Div, |b| {
-                    b.push_builder(guild_list)
+                    //b.push_builder(guild_list)
 
                     // TODO:
-                    // let mut b = b.push_builder(guild_list);
-                    //
-                    // if !needs_setup && can_add_guild && !discord_guilds.is_empty() {
-                    //     b = b
-                    //         .attribute("class", "container")
-                    //         .builder_text(Tag::Header2, "Add a Guild")
-                    //         .push_builder(setup_guild_list(&state.origin, &discord_guilds));
-                    // }
-                    //
-                    // b
+                    let mut b = b.push_builder(guild_list);
+
+                    if !needs_setup && can_add_guild && !discord_guilds.is_empty() {
+                        b = b
+                            .attribute("class", "container")
+                            .builder_text(Tag::Header2, "Add a Guild")
+                            .push_builder(setup_guild_list(&state.origin, &discord_guilds));
+                    }
+
+                    b
                 })
                 .build(),
         ))
@@ -144,7 +157,23 @@ pub async fn guild_dashboard<S: IntroToolService>(
         return Err(Redirect::to(&format!("{}/error", state.origin)));
     }
 
-    let can_upload = true;
+    let user_guild_perms = guild
+        .users()
+        .iter()
+        .find(|(guild_user, _)| guild_user.name() == user.name())
+        .map(|(_, perms)| *perms)
+        .unwrap_or_default();
+
+    let is_moderator = user_guild_perms.can(auth::Permission::Moderator);
+    let can_add_channel = user_guild_perms.can(auth::Permission::AddChannel);
+    let can_upload = user_guild_perms.can(auth::Permission::UploadSounds);
+    let mod_dashboard = moderator_dashboard(
+        &state,
+        &state.secrets.bot_token,
+        guild_id.into(),
+        user_guild_perms,
+    )
+    .await;
 
     Ok(Html(
         HtmxBuilder::new(Tag::Html)
@@ -157,18 +186,17 @@ pub async fn guild_dashboard<S: IntroToolService>(
                 })
             })
             .builder(Tag::Empty, |b| {
-                // TODO:
-                // let mut b = if is_moderator || can_add_channel {
-                //     b.builder(Tag::Div, |b| {
-                //         b.attribute("class", "container")
-                //             .builder(Tag::Article, |b| {
-                //                 b.builder_text(Tag::Header, "Server Settings")
-                //                     .push_builder(mod_dashboard)
-                //             })
-                //     })
-                // } else {
-                //     b
-                // };
+                let b = if is_moderator || can_add_channel {
+                    b.builder(Tag::Div, |b| {
+                        b.attribute("class", "container")
+                            .builder(Tag::Article, |b| {
+                                b.builder_text(Tag::Header, "Server Settings")
+                                    .push_builder(mod_dashboard)
+                            })
+                    })
+                } else {
+                    b
+                };
                 let b = if can_upload {
                     b.builder(Tag::Div, |b| {
                         b.attribute("class", "container")
@@ -226,6 +254,99 @@ pub async fn guild_dashboard<S: IntroToolService>(
     ))
 }
 
+async fn moderator_dashboard<S: IntroToolService>(
+    state: &ApiState<S>,
+    bot_token: &str,
+    guild_id: GuildId,
+    user_permissions: auth::Permissions,
+) -> HtmxBuilder {
+    let permissions_editor = permissions_editor(state, guild_id).await;
+    //let channel_editor = channel_editor(state, bot_token, guild_id).await;
+
+    let mut b = HtmxBuilder::new(Tag::Empty);
+
+    if user_permissions.can(auth::Permission::Moderator) {
+        b = b.push_builder(permissions_editor);
+    }
+    //if user_permissions.can(auth::Permission::AddChannel) {
+    //    b = b.push_builder(channel_editor);
+    //}
+
+    b
+}
+
+async fn permissions_editor<S: IntroToolService>(
+    state: &ApiState<S>,
+    guild_id: GuildId,
+) -> HtmxBuilder {
+    let guild_users = state
+        .intro_tool_service
+        .get_guild_users(guild_id)
+        .await
+        .unwrap_or_default();
+
+    HtmxBuilder::new(Tag::Details)
+        .builder_text(Tag::Summary, "Permissions")
+        .form(|b| {
+            b.hx_post(&format!(
+                "{}/guild/{}/permissions/update",
+                state.origin, guild_id
+            ))
+            .attribute("hx-encoding", "multipart/form-data")
+            .builder(Tag::Table, |b| {
+                let mut b = b.attribute("role", "grid").builder(Tag::TableHead, |b| {
+                    let mut b = b.builder_text(Tag::TableHeader, "User");
+
+                    for perm in enum_iterator::all::<auth::Permission>() {
+                        if perm == auth::Permission::Moderator || perm == auth::Permission::None {
+                            continue;
+                        }
+
+                        b = b.builder_text(Tag::TableHeader, &perm.to_string());
+                    }
+
+                    b
+                });
+
+                for (user, permissions) in guild_users {
+                    b = b.builder(Tag::TableRow, |b| {
+                        let mut b = b.builder_text(Tag::TableData, user.name());
+
+                        for perm in enum_iterator::all::<auth::Permission>() {
+                            if perm == auth::Permission::Moderator || perm == auth::Permission::None
+                            {
+                                continue;
+                            }
+
+                            b = b.builder(Tag::TableData, |b| {
+                                b.builder(Tag::Input, |b| {
+                                    let mut b = b
+                                        .attribute("type", "checkbox")
+                                        .attribute("name", &format!("{}#{}", user.name(), perm));
+
+                                    if permissions.can(auth::Permission::Moderator) {
+                                        b = b.flag("disabled");
+                                    }
+
+                                    if permissions.can(perm) {
+                                        return b.flag("checked");
+                                    }
+
+                                    b
+                                })
+                            });
+                        }
+
+                        b
+                    });
+                }
+
+                b
+            })
+            .button(|b| b.attribute("type", "submit").text("Update Permissions"))
+        })
+}
+
 pub async fn auth<S: IntroToolService>(
     State(state): State<ApiState<S>>,
     Query(params): Query<HashMap<String, String>>,
@@ -275,6 +396,23 @@ fn guild_list<'a>(origin: &str, guilds: impl Iterator<Item = &'a GuildRef>) -> H
         let mut b = b;
         for guild in guilds {
             b = b.li(|b| b.link(guild.name(), &format!("{}/guild/{}", origin, guild.id())));
+        }
+
+        b
+    })
+}
+
+fn setup_guild_list<'a>(origin: &str, user_guilds: &[ExternalGuild]) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).ul(|b| {
+        let mut b = b;
+        for guild in user_guilds {
+            b = b.li(|b| {
+                b.link(
+                    &guild.name,
+                    // TODO: url encode the name
+                    &format!("{}/guild/{}/setup?name={}", origin, guild.id.0, guild.name),
+                )
+            });
         }
 
         b

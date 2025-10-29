@@ -6,14 +6,17 @@ use tokio::sync::Mutex;
 use anyhow::Context;
 use rusqlite::Connection;
 
-use crate::domain::intro_tool::{
-    models::guild::{
-        self, AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserRequest, Channel,
-        ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,
-        CreateGuildRequest, CreateUserError, CreateUserRequest, GetChannelError, GetGuildError,
-        GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId, User, UserName,
+use crate::{
+    auth::{AppPermissions, Permissions},
+    domain::intro_tool::{
+        models::guild::{
+            self, AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserRequest, Channel,
+            ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,
+            CreateGuildRequest, CreateUserError, CreateUserRequest, GetChannelError, GetGuildError,
+            GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId, User, UserName,
+        },
+        ports::IntroToolRepository,
     },
-    ports::IntroToolRepository,
 };
 
 #[derive(Clone)]
@@ -115,7 +118,10 @@ impl IntroToolRepository for Sqlite {
             .context("failed to query row")?)
     }
 
-    async fn get_guild_users(&self, guild_id: GuildId) -> Result<Vec<User>, GetUserError> {
+    async fn get_guild_users(
+        &self,
+        guild_id: GuildId,
+    ) -> Result<Vec<(User, Permissions)>, GetUserError> {
         let conn = self.conn.lock().await;
 
         let mut query = conn
@@ -123,12 +129,16 @@ impl IntroToolRepository for Sqlite {
                 "
                 SELECT
                     User.username AS name,
+                    UAP.permissions,
+                    UGP.permissions,
                     User.api_key,
                     User.api_key_expires_at,
                     User.discord_token,
                     User.discord_token_expires_at
                 FROM UserGuild
                 LEFT JOIN User ON User.username = UserGuild.username
+                LEFT JOIN UserPermission UGP ON UGP.username = User.username and UGP.guild_id = UserGuild.guild_id
+                LEFT JOIN UserAppPermission UAP ON UAP.username = User.username
                 WHERE UserGuild.guild_id = :guild_id
                 ",
             )
@@ -136,12 +146,20 @@ impl IntroToolRepository for Sqlite {
 
         let users = query
             .query_map(&[(":guild_id", &guild_id.to_string())], |row| {
-                Ok(User::new(
-                    UserName::from(row.get::<_, String>(0)?),
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
+                Ok((
+                    User::new(
+                        UserName::from(row.get::<_, String>(0)?),
+                        row.get::<_, Option<u8>>(1)?
+                            .map(AppPermissions)
+                            .unwrap_or_default(),
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ),
+                    row.get::<_, Option<u8>>(2)?
+                        .map(Permissions)
+                        .unwrap_or_default(),
                 ))
             })
             .context("failed to map prepared query")?
@@ -218,9 +236,15 @@ impl IntroToolRepository for Sqlite {
                 .prepare(
                     "
                     SELECT
-                        username AS name, api_key, api_key_expires_at, discord_token, discord_token_expires_at
+                        User.username AS name,
+                        UAP.permissions,
+                        api_key,
+                        api_key_expires_at,
+                        discord_token,
+                        discord_token_expires_at
                     FROM User
-                    WHERE username = :username
+                    LEFT JOIN UserAppPermission UAP ON UAP.username = User.username
+                    WHERE User.username = :username
                     ",
                 )
                 .context("failed to prepare query")?;
@@ -229,10 +253,13 @@ impl IntroToolRepository for Sqlite {
                 .query_row(&[(":username", username.as_ref())], |row| {
                     Ok(User::new(
                         UserName::from(row.get::<_, String>(0)?),
-                        row.get(1)?,
+                        row.get::<_, Option<u8>>(1)?
+                            .map(AppPermissions)
+                            .unwrap_or_default(),
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 })
                 .context("failed to query row")?
@@ -381,6 +408,27 @@ impl IntroToolRepository for Sqlite {
             [api_key, &expires_at.to_string(), username],
         )
         .context("failed to update user api key")?;
+
+        Ok(())
+    }
+
+    async fn set_user_external_token(
+        &self,
+        username: &str,
+        token: &str,
+        expires_at: NaiveDateTime,
+    ) -> Result<(), GetUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            UPDATE User
+            SET discord_token = ?1, discord_token_expires_at = ?2
+            WHERE username = ?3
+            ",
+            [token, &expires_at.to_string(), username],
+        )
+        .context("failed to update user external token")?;
 
         Ok(())
     }

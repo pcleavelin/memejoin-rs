@@ -1,8 +1,11 @@
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDateTime, Utc};
 
-use crate::domain::intro_tool::{
-    models::{self, guild::IntroId},
-    ports::{IntroToolRepository, IntroToolService},
+use crate::{
+    auth::AppPermissions,
+    domain::intro_tool::{
+        models::{self, guild::IntroId},
+        ports::IntroToolService,
+    },
 };
 
 use super::ports::AuthService;
@@ -13,6 +16,7 @@ where
     S: IntroToolService,
 {
     impersonated_username: String,
+    permissions: AppPermissions,
     wrapped_service: S,
 }
 
@@ -20,10 +24,15 @@ impl<S> DebugService<S>
 where
     S: IntroToolService,
 {
-    pub fn new(wrapped_service: S, impersonated_username: String) -> Self {
+    pub fn new(
+        wrapped_service: S,
+        impersonated_username: String,
+        permissions: AppPermissions,
+    ) -> Self {
         Self {
             wrapped_service,
             impersonated_username,
+            permissions,
         }
     }
 }
@@ -59,7 +68,8 @@ where
     async fn get_guild_users(
         &self,
         guild_id: models::guild::GuildId,
-    ) -> Result<Vec<models::guild::User>, models::guild::GetUserError> {
+    ) -> Result<Vec<(models::guild::User, crate::auth::Permissions)>, models::guild::GetUserError>
+    {
         self.wrapped_service.get_guild_users(guild_id).await
     }
 
@@ -84,6 +94,15 @@ where
         self.wrapped_service.get_user_guilds(username).await
     }
 
+    async fn get_user_external_guilds<A: AuthService>(
+        &self,
+        req: <A as AuthService>::ListGuildsRequest,
+    ) -> Result<Vec<models::guild::ExternalGuild>, A::Error> {
+        self.wrapped_service
+            .get_user_external_guilds::<A>(req)
+            .await
+    }
+
     async fn get_user_from_api_key(
         &self,
         _api_key: &str,
@@ -95,9 +114,10 @@ where
 
         Ok(models::guild::User::new(
             self.impersonated_username.clone(),
+            self.permissions,
             "testApiKey".into(),
             Utc::now().naive_utc() + Duration::days(1),
-            "testDiscordToken".into(),
+            user.external_token().to_string(),
             Utc::now().naive_utc() + Duration::days(1),
         )
         .with_channel_intros(user.intros().clone()))
@@ -115,6 +135,17 @@ where
         username: &str,
     ) -> Result<String, models::guild::GetUserError> {
         self.wrapped_service.refresh_user_token(username).await
+    }
+
+    async fn refresh_user_external_token(
+        &self,
+        username: &str,
+        token: &str,
+        expires_at: NaiveDateTime,
+    ) -> Result<(), models::guild::GetUserError> {
+        self.wrapped_service
+            .refresh_user_external_token(username, token, expires_at)
+            .await
     }
 
     async fn create_guild(

@@ -321,6 +321,11 @@ impl From<DiscordError> for ApiError {
 
                 Self::internal(error.to_string())
             }
+            DiscordError::SerdeJson(error) => {
+                tracing::error!(err = ?error, "serde json error");
+
+                Self::internal(format!("{:#?}", error))
+            }
         }
     }
 }

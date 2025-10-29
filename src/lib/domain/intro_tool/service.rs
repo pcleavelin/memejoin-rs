@@ -1,14 +1,18 @@
-use chrono::{Duration, Utc};
+use chrono::{Duration, NaiveDateTime, Utc};
 use iter_tools::Itertools;
 use uuid::Uuid;
 
-use crate::domain::intro_tool::{
-    models::guild::{
-        self, ApiToken, AutheticateUserError, CreateUserRequest, GetUserError, GuildId, IntroId,
-        User,
-    },
-    ports::{
-        ExternalUser, IntroToolRepository, IntroToolService, LocalAudioFetcher, RemoteAudioFetcher,
+use crate::{
+    auth::Permissions,
+    domain::intro_tool::{
+        models::guild::{
+            self, ApiToken, AutheticateUserError, CreateUserRequest, ExternalGuild, GetUserError,
+            GuildId, IntroId, User,
+        },
+        ports::{
+            ExternalUser, IntroToolRepository, IntroToolService, LocalAudioFetcher,
+            RemoteAudioFetcher,
+        },
     },
 };
 
@@ -95,6 +99,13 @@ where
         let user = self.get_user(external_user.username()).await?;
         let user_guilds = self.get_user_guilds(user.name()).await?;
 
+        self.refresh_user_external_token(
+            user.name(),
+            external_user.external_token(),
+            external_user.external_token_expires_at(),
+        )
+        .await?;
+
         let guilds_to_add_user =
             user_guilds
                 .iter()
@@ -124,7 +135,10 @@ where
         self.repo.get_guilds().await
     }
 
-    async fn get_guild_users(&self, guild_id: GuildId) -> Result<Vec<User>, GetUserError> {
+    async fn get_guild_users(
+        &self,
+        guild_id: GuildId,
+    ) -> Result<Vec<(User, Permissions)>, GetUserError> {
         self.repo.get_guild_users(guild_id).await
     }
 
@@ -147,6 +161,13 @@ where
         username: impl AsRef<str> + Send,
     ) -> Result<Vec<guild::GuildRef>, guild::GetGuildError> {
         self.repo.get_user_guilds(username).await
+    }
+
+    async fn get_user_external_guilds<A: AuthService>(
+        &self,
+        req: <A as AuthService>::ListGuildsRequest,
+    ) -> Result<Vec<ExternalGuild>, A::Error> {
+        A::get_guilds(req).await
     }
 
     async fn get_user_from_api_key(&self, api_key: &str) -> Result<User, GetUserError> {
@@ -176,6 +197,19 @@ where
             .await?;
 
         Ok(user_token)
+    }
+
+    async fn refresh_user_external_token(
+        &self,
+        username: &str,
+        token: &str,
+        expires_at: NaiveDateTime,
+    ) -> Result<(), GetUserError> {
+        self.repo
+            .set_user_external_token(username, &token, expires_at)
+            .await?;
+
+        Ok(())
     }
 
     async fn create_guild(

@@ -1,3 +1,9 @@
+// TODO: move this whole module
+
+use anyhow::anyhow;
+use std::str::FromStr;
+
+use enum_iterator::Sequence;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -16,45 +22,22 @@ pub(crate) struct Discord {
     pub(crate) scope: String,
 }
 
-/*
-use std::str::FromStr;
-
-use enum_iterator::Sequence;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Discord {
-    pub(crate) access_token: String,
-    pub(crate) token_type: String,
-    pub(crate) expires_in: usize,
-    pub(crate) refresh_token: String,
-    pub(crate) scope: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct User {
-    pub(crate) auth: Discord,
-    pub(crate) name: String,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AppPermissions(pub(crate) u8);
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct AppPermissions(pub(crate) u8);
 
 impl AppPermissions {
-    pub(crate) fn can(&self, perm: AppPermission) -> bool {
+    pub fn can(&self, perm: AppPermission) -> bool {
         (self.0 & (perm as u8) > 0) || (self.0 & (AppPermission::Admin as u8) > 0)
     }
 
-    // FIXME: eventually use this
-    #[allow(dead_code)]
-    pub(crate) fn add(&mut self, perm: Permission) {
+    pub fn add(&mut self, perm: AppPermission) {
         self.0 |= perm as u8;
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Sequence)]
 #[repr(u8)]
-pub(crate) enum AppPermission {
+pub enum AppPermission {
     None = 0,
     AddGuild = 1,
     Admin = 128,
@@ -81,19 +64,19 @@ impl std::fmt::Display for AppPermission {
 }
 
 impl FromStr for AppPermission {
-    type Err = Error;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "Add Guild" => Ok(Self::AddGuild),
             "Admin" => Ok(Self::Admin),
-            _ => Err(Self::Err::InvalidRequest),
+            _ => Err(anyhow!("invalid request")),
         }
     }
 }
 
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
-pub(crate) struct Permissions(pub(crate) u8);
+pub struct Permissions(pub(crate) u8);
 
 impl Permissions {
     pub(crate) fn can(&self, perm: Permission) -> bool {
@@ -140,7 +123,7 @@ impl std::fmt::Display for Permission {
 }
 
 impl FromStr for Permission {
-    type Err = Error;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -149,8 +132,7 @@ impl FromStr for Permission {
             "Soundboard" => Ok(Self::Soundboard),
             "Add Channel" => Ok(Self::AddChannel),
             "Moderator" => Ok(Self::Moderator),
-            _ => Err(Self::Err::InvalidRequest),
+            _ => Err(anyhow!("invalid request")),
         }
     }
 }
-*/

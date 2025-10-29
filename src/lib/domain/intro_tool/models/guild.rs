@@ -3,7 +3,10 @@ use std::{borrow::Cow, collections::HashMap};
 use chrono::NaiveDateTime;
 use thiserror::Error;
 
-use crate::domain::intro_tool::ports::AuthService;
+use crate::{
+    auth::{AppPermissions, Permissions},
+    domain::intro_tool::ports::AuthService,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ApiToken(String);
@@ -106,7 +109,7 @@ pub struct Guild {
     guild: GuildRef,
 
     channels: Vec<Channel>,
-    users: Vec<User>,
+    users: Vec<(User, Permissions)>,
 }
 
 #[derive(Debug)]
@@ -164,7 +167,7 @@ impl Guild {
         self.guild.name()
     }
 
-    pub fn users(&self) -> &[User] {
+    pub fn users(&self) -> &[(User, Permissions)] {
         &self.users
     }
 
@@ -172,7 +175,7 @@ impl Guild {
         &self.channels
     }
 
-    pub fn with_users(self, users: Vec<User>) -> Self {
+    pub fn with_users(self, users: Vec<(User, Permissions)>) -> Self {
         Self { users, ..self }
     }
 
@@ -181,9 +184,16 @@ impl Guild {
     }
 }
 
+pub struct ExternalGuild {
+    pub id: ExternalGuildId,
+    pub name: String,
+}
+
 #[derive(Debug)]
 pub struct User {
     name: UserName,
+
+    permissions: AppPermissions,
 
     api_key: String,
     api_key_expires_at: NaiveDateTime,
@@ -196,6 +206,7 @@ pub struct User {
 impl User {
     pub fn new(
         name: impl Into<UserName>,
+        permissions: AppPermissions,
         api_key: String,
         api_key_expires_at: NaiveDateTime,
         discord_token: String,
@@ -203,6 +214,7 @@ impl User {
     ) -> Self {
         Self {
             name: name.into(),
+            permissions,
             api_key,
             api_key_expires_at,
             discord_token,
@@ -219,12 +231,20 @@ impl User {
         &self.channel_intros
     }
 
+    pub fn permissions(&self) -> AppPermissions {
+        self.permissions
+    }
+
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
 
     pub fn api_key_expires_at(&self) -> NaiveDateTime {
         self.api_key_expires_at
+    }
+
+    pub fn external_token(&self) -> &str {
+        &self.discord_token
     }
 
     pub fn discord_token_expires_at(&self) -> NaiveDateTime {

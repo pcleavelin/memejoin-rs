@@ -2,8 +2,11 @@ use std::{collections::HashMap, future::Future};
 
 use chrono::NaiveDateTime;
 
-use crate::domain::intro_tool::models::guild::{
-    AddUserToGuildError, AutheticateUserError, ExternalGuildId, UserName,
+use crate::{
+    auth::Permissions,
+    domain::intro_tool::models::guild::{
+        AddUserToGuildError, AutheticateUserError, ExternalGuild, ExternalGuildId, UserName,
+    },
 };
 
 use super::models::guild::{
@@ -29,7 +32,7 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
     fn get_guild_users(
         &self,
         guild_id: GuildId,
-    ) -> impl Future<Output = Result<Vec<User>, GetUserError>> + Send;
+    ) -> impl Future<Output = Result<Vec<(User, Permissions)>, GetUserError>> + Send;
     fn get_guild_intros(
         &self,
         guild_id: GuildId,
@@ -42,6 +45,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         username: impl AsRef<str> + Send,
     ) -> impl Future<Output = Result<Vec<GuildRef>, GetGuildError>> + Send;
+    fn get_user_external_guilds<A: AuthService>(
+        &self,
+        req: A::ListGuildsRequest,
+    ) -> impl Future<Output = Result<Vec<ExternalGuild>, A::Error>> + Send;
     fn get_user_from_api_key(
         &self,
         api_key: &str,
@@ -56,6 +63,12 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         username: &str,
     ) -> impl Future<Output = Result<String, GetUserError>> + Send;
+    fn refresh_user_external_token(
+        &self,
+        username: &str,
+        token: &str,
+        expires_at: NaiveDateTime,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
 
     async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
 
@@ -92,7 +105,7 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
     fn get_guild_users(
         &self,
         guild_id: GuildId,
-    ) -> impl Future<Output = Result<Vec<User>, GetUserError>> + Send;
+    ) -> impl Future<Output = Result<Vec<(User, Permissions)>, GetUserError>> + Send;
 
     fn get_guild_channels(
         &self,
@@ -131,6 +144,13 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         expires_at: NaiveDateTime,
     ) -> impl Future<Output = Result<(), GetUserError>> + Send;
 
+    fn set_user_external_token(
+        &self,
+        username: &str,
+        token: &str,
+        expires_at: NaiveDateTime,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
+
     fn set_user_intro(
         &self,
         req: AddIntroToUserRequest,
@@ -164,6 +184,7 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
 
 pub trait ExternalUser: Send + Sync + Clone + 'static {
     fn external_token(&self) -> &str;
+    fn external_token_expires_at(&self) -> NaiveDateTime;
     fn username(&self) -> UserName;
     fn guilds(&self) -> impl Iterator<Item = ExternalGuildId>;
 }
@@ -172,9 +193,15 @@ pub trait AuthService: Send + Sync + Clone + 'static {
     type User: ExternalUser + Send;
     type Error: std::error::Error + Send;
 
+    type ListGuildsRequest: Send;
+
     fn authenticate_user(
         params: Self::Params,
     ) -> impl Future<Output = Result<Self::User, Self::Error>> + Send;
+
+    fn get_guilds(
+        req: Self::ListGuildsRequest,
+    ) -> impl Future<Output = Result<Vec<ExternalGuild>, Self::Error>> + Send;
 }
 
 pub trait RemoteAudioFetcher: Send + Sync + Clone + 'static {

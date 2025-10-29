@@ -1,19 +1,15 @@
 mod db;
 pub mod settings;
 
-use serenity::all::Cache;
+use memejoin_rs::auth::{AppPermission, AppPermissions};
 use songbird::driver::Bitrate;
-use songbird::input::LiveInput;
-use axum::http::Method;
-use axum::routing::{get, post};
-use axum::Router;
-use settings::ApiState;
 use std::env;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use serenity::async_trait;
-use serenity::model::prelude::{Channel, ChannelId, GuildId, Member, Ready};
+use serenity::model::prelude::{ChannelId, GuildId, Member, Ready};
 use serenity::model::voice::VoiceState;
 use serenity::prelude::GatewayIntents;
 use serenity::prelude::*;
@@ -289,9 +285,25 @@ async fn main() -> std::io::Result<()> {
     let remote_audio_fetcher = outbound::ytdlp::Ytdlp;
 
     if let Ok(impersonated_username) = env::var("IMPERSONATED_USERNAME") {
+        let test_permissions = env::var("TEST_PERMISSIONS")
+            .map(|s| {
+                s.split(',').map(AppPermission::from_str).fold(
+                    AppPermissions::default(),
+                    |mut acc, perm| {
+                        acc.add(perm.expect("unknown permission"));
+                        acc
+                    },
+                )
+            })
+            .unwrap_or_default();
+
         let service =
             intro_tool::service::Service::new(db, remote_audio_fetcher, local_audio_fetcher);
-        let service = intro_tool::debug_service::DebugService::new(service, impersonated_username);
+        let service = intro_tool::debug_service::DebugService::new(
+            service,
+            impersonated_username,
+            test_permissions,
+        );
 
         let http_server = inbound::http::HttpServer::new(service, secrets, origin)
             .expect("couldn't start http server");

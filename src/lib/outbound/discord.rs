@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use chrono::{Duration, NaiveDateTime, Utc};
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use crate::domain::intro_tool::{
-    models::guild::{ExternalGuildId, UserName},
+    models::guild::{ExternalGuild, ExternalGuildId, UserName},
     ports::{AuthService, ExternalUser},
 };
 
@@ -14,6 +15,7 @@ pub struct DiscordService;
 #[derive(Clone)]
 pub struct DiscordUser {
     token: String,
+    expires_at: NaiveDateTime,
     username: String,
     guilds: Vec<u64>,
 }
@@ -22,6 +24,8 @@ pub struct DiscordUser {
 pub enum DiscordError {
     #[error(transparent)]
     ApiRequest(#[from] reqwest::Error),
+    #[error(transparent)]
+    SerdeJson(#[from] serde_json::Error),
 }
 
 pub struct DiscordAuthParams {
@@ -57,6 +61,8 @@ impl AuthService for DiscordService {
     type Params = DiscordAuthParams;
     type User = DiscordUser;
     type Error = DiscordError;
+
+    type ListGuildsRequest = String;
 
     async fn authenticate_user(params: Self::Params) -> Result<Self::User, Self::Error> {
         let mut data = HashMap::new();
@@ -98,15 +104,42 @@ impl AuthService for DiscordService {
 
         Ok(Self::User {
             token: auth.access_token,
+            expires_at: Utc::now().naive_utc() + Duration::seconds(auth.expires_in as _),
             username: user.username,
             guilds: discord_guilds.into_iter().map(|guild| guild.id).collect(),
         })
+    }
+
+    async fn get_guilds(req: Self::ListGuildsRequest) -> Result<Vec<ExternalGuild>, Self::Error> {
+        let client = reqwest::Client::new();
+        let response = client
+            .get("https://discord.com/api/v10/users/@me/guilds")
+            .bearer_auth(&req)
+            .send()
+            .await?;
+
+        let response_text = response.text().await?;
+        tracing::debug!(?response_text);
+
+        let discord_guilds: Vec<DiscordUserGuild> = serde_json::from_str(&response_text)?;
+
+        Ok(discord_guilds
+            .into_iter()
+            .map(|guild| ExternalGuild {
+                id: ExternalGuildId(guild.id),
+                name: guild.name,
+            })
+            .collect())
     }
 }
 
 impl ExternalUser for DiscordUser {
     fn external_token(&self) -> &str {
         &self.token
+    }
+
+    fn external_token_expires_at(&self) -> NaiveDateTime {
+        self.expires_at
     }
 
     fn username(&self) -> UserName {
