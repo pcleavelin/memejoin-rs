@@ -13,7 +13,10 @@ pub mod settings;
 use axum::http::Method;
 use axum::routing::{get, post};
 use axum::Router;
+use serenity::all::Cache;
 use settings::ApiState;
+use songbird::driver::Bitrate;
+use songbird::input::LiveInput;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -32,8 +35,10 @@ use crate::settings::Settings;
 
 enum HandlerMessage {
     Ready(Context),
-    PlaySound(Context, Member, ChannelId),
+    PlaySound(Context, Member, GuildId, ChannelId),
     TrackEnded(GuildId),
+
+    LeaveVoiceChannel(Context, Member, GuildId),
 }
 
 struct Handler {
@@ -83,16 +88,21 @@ impl EventHandler for Handler {
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         if old.is_none() {
-            if let (Some(member), Some(channel_id)) = (new.member, new.channel_id) {
+            if let (Some(member), Some(guild_id), Some(channel_id)) =
+                (new.member, new.guild_id, new.channel_id)
+            {
                 if member.user.name == "MemeJoin" {
                     return;
                 }
 
                 info!(
-                    "{}#{} joined voice channel {:?} in {:?}",
+                    "{} joined voice channel {:?} in {:?}",
                     member.user.name,
-                    member.user.discriminator,
-                    channel_id.name(&ctx.cache).await,
+                    ctx.cache
+                        .guild(guild_id)
+                        .as_ref()
+                        .and_then(|guild| guild.channels.get(&channel_id))
+                        .map(|channel| channel.name()),
                     member
                         .guild_id
                         .name(&ctx.cache)
@@ -106,7 +116,7 @@ impl EventHandler for Handler {
                     .clone();
 
                 if let Err(err) = tx
-                    .send(HandlerMessage::PlaySound(ctx, member, channel_id))
+                    .send(HandlerMessage::PlaySound(ctx, member, guild_id, channel_id))
                     .await
                 {
                     error!("Failed to send play sound message to handler: {err}");
@@ -182,6 +192,7 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
     let songbird = songbird::Songbird::serenity();
 
     let (tx, mut rx) = mpsc::channel(10);
+    let tx2 = tx.clone();
 
     let intents = GatewayIntents::GUILDS
         | GatewayIntents::GUILD_MESSAGES
@@ -219,7 +230,7 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                     };
 
                     for guild in guilds {
-                        let handler_lock = songbird.get_or_insert(GuildId(guild.id));
+                        let handler_lock = songbird.get_or_insert(GuildId::new(guild.id));
 
                         let mut handler = handler_lock.lock().await;
 
@@ -227,7 +238,7 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                             songbird::Event::Track(songbird::TrackEvent::End),
                             TrackEventHandler {
                                 tx: tx.clone(),
-                                guild_id: GuildId(guild.id),
+                                guild_id: GuildId::new(guild.id),
                             },
                         );
                     }
@@ -235,32 +246,39 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                 HandlerMessage::TrackEnded(guild_id) => {
                     info!("Got TrackEnded message");
 
-                    if let Some(manager) = songbird.get(guild_id) {
-                        let mut handler = manager.lock().await;
-                        let queue = handler.queue();
+                    if let Some(call) = songbird.get(guild_id) {
+                        let mut call = call.lock().await;
+                        let queue = call.queue();
 
                         if queue.is_empty() {
                             info!("Track Queue is empty, leaving voice channel");
-                            if let Err(err) = handler.leave().await {
+                            if let Err(err) = call.leave().await {
                                 error!("Failed to leave channel: {err:?}");
                             }
                         }
                     }
                 }
-
-                HandlerMessage::PlaySound(ctx, member, channel_id) => {
+                HandlerMessage::PlaySound(ctx, member, guild_id, channel_id) => {
                     info!("Got PlaySound message");
 
-                    let Some(Channel::Guild(channel)) = channel_id.to_channel_cached(&ctx.cache)
-                    else {
-                        error!("Failed to get cached channel from member!");
-                        continue;
+                    let channel_name = {
+                        let guild = ctx.cache.guild(guild_id);
+
+                        let Some(channel) = guild
+                            .as_ref()
+                            .and_then(|guild| guild.channels.get(&channel_id))
+                        else {
+                            error!("Failed to get cached channel from member!");
+                            continue;
+                        };
+
+                        channel.name().to_string()
                     };
 
                     let intros = match db.lock().await.get_user_channel_intros(
                         &member.user.name,
-                        channel.guild_id.0,
-                        channel.name(),
+                        guild_id.get(),
+                        &channel_name,
                     ) {
                         Ok(intros) => intros,
                         Err(err) => {
@@ -278,29 +296,43 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                         continue;
                     };
 
-                    let source = match songbird::ffmpeg(format!("sounds/{}", &intro.filename)).await
-                    {
-                        Ok(source) => source,
+                    let file = songbird::input::File::new(format!("sounds/{}", &intro.filename));
+                    let compressed_file =
+                        match songbird::input::cached::Compressed::new(file.into(), Bitrate::Auto)
+                            .await
+                        {
+                            Ok(compressed_file) => compressed_file,
+                            Err(err) => {
+                                error!("Failed to compress file: {err:?}");
+                                continue;
+                            }
+                        };
+
+                    match songbird.join(guild_id, channel_id).await {
+                        Ok(call) => {
+                            let mut call = call.lock().await;
+
+                            call.enqueue_input(compressed_file.into()).await;
+                        }
                         Err(err) => {
-                            error!(
-                                "Error starting file source from {}: {err:?}",
-                                intro.filename
-                            );
-                            continue;
-                        }
-                    };
+                            error!("Failed to join voice channel {}: {err:?}", channel_name);
 
-                    match songbird.join(member.guild_id, channel_id).await {
-                        (handler_lock, Ok(())) => {
-                            let mut handler = handler_lock.lock().await;
-
-                            let _track_handler = handler.enqueue_source(source);
-                            // TODO: set volume
+                            if let Err(err) = tx2
+                                .send(HandlerMessage::LeaveVoiceChannel(ctx, member, guild_id))
+                                .await
+                            {
+                                error!(
+                                    "Failed to send leave voice channel message to handler: {err}"
+                                );
+                            }
                         }
+                    }
+                }
+                HandlerMessage::LeaveVoiceChannel(_context, _member, guild_id) => {
+                    info!("Got LeaveVoiceChannel message");
 
-                        (_, Err(err)) => {
-                            error!("Failed to join voice channel {}: {err:?}", channel.name());
-                        }
+                    if let Err(err) = songbird.leave(guild_id).await {
+                        error!("Failed to leave channel: {err:?}");
                     }
                 }
             }

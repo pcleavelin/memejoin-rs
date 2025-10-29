@@ -8,19 +8,19 @@
   outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        tag = "v0.2.2-alpha";
+        tag = "v0.3.0-alpha";
         overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
           inherit system overlays;
         };
         yt-dlp = pkgs.yt-dlp.overrideAttrs (oldAttr: rec {
           inherit (oldAttr) name;
-          version = "2024.05.27";
+          version = "2025.09.26";
           src = pkgs.fetchFromGitHub {
             owner = "yt-dlp";
             repo = "yt-dlp";
             rev = "${version}";
-            sha256 = "55zDAMwCJPn5zKrAFw4ogTxxmvjrv4PvhYO7PsHbRo4=";
+            sha256 = "/uzs87Vw+aDNfIJVLOx3C8RyZvWLqjggmnjrOvUX1Eg=";
           };
         });
         local-rust = (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain).override {
@@ -30,6 +30,7 @@
       {
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
+            git
             local-rust
             rust-analyzer
             pkg-config
