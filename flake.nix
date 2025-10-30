@@ -69,7 +69,7 @@
             name = "memejoin-rs";
             copyToRoot = buildEnv {
               name = "image-root";
-              paths = [ default cacert openssl openssl.dev ffmpeg libopus youtube-dl yt-dlp sqlite ];
+              paths = [ default cacert openssl openssl.dev ffmpeg libopus yt-dlp sqlite ];
             };
             runAsRoot = ''
               #!${runtimeShell}

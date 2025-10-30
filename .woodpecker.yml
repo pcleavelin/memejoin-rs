@@ -4,6 +4,7 @@ steps:
       event: [push, tag]
     image: alpine:edge
     commands:
+      - export NIXPKGS_ALLOW_INSECURE=1
       - apk update && apk upgrade
       - apk add --no-cache git nix --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
       - echo "system-features = nixos-test benchmark big-parallel uid-range kvm" > /etc/nix/nix.conf
