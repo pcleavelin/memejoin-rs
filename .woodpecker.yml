@@ -16,7 +16,9 @@ steps:
     when:
       event: tag
     image: docker
-    secrets: [ forgejo_token ]
+    environment:
+      FORGEJO_TOKEN:
+        from_secret: forgejo_token
     commands:
       - 'docker login -u ${CI_REPO_OWNER} --password $${FORGEJO_TOKEN} git.spacegirl.nl'
       - 'docker image load --input memejoin-rs.tar.gz'
