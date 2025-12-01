@@ -3,22 +3,25 @@ use std::collections::HashMap;
 use axum::{
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, HeaderValue},
-    response::Html,
+    response::{Html, Redirect},
 };
+use serde::Deserialize;
 
 use crate::{
+    auth::AppPermission,
     domain::intro_tool::{
         models::guild::{
-            AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, GuildId, IntroRequestData,
-            User, UserName,
+            AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, CreateGuildRequest,
+            GuildId, IntroRequestData, User, UserName,
         },
         ports::IntroToolService,
     },
     htmx::Build,
     inbound::{
-        http::{page, ApiState},
+        http::{ApiState, page},
         response::{ApiError, ErrorAsRedirect},
     },
+    outbound::discord::DiscordService,
 };
 
 trait FromApi<T, P>: Sized {
@@ -251,4 +254,54 @@ pub(super) async fn set_user_intro<S: IntroToolService>(
         )
         .build(),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GuildSetupParams {
+    name: String,
+}
+
+pub(super) async fn guild_setup<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path(guild_id): Path<u64>,
+    user: User,
+    Query(GuildSetupParams { name }): Query<GuildSetupParams>,
+) -> Result<Redirect, ApiError> {
+    // FIXME: move this into the service impl
+
+    if !user.permissions().can(AppPermission::AddGuild) {
+        return Err(ApiError::forbidden("invalid permissions"));
+    }
+
+    let Some(external_guild) = state
+        .intro_tool_service
+        .get_user_external_guilds::<DiscordService>(user.external_token().to_string())
+        .await?
+        .into_iter()
+        .find(|external| external.id.0 == guild_id)
+    else {
+        return Err(ApiError::forbidden("invalid guild"));
+    };
+
+    let new_guild = state
+        .intro_tool_service
+        .create_guild(CreateGuildRequest {
+            name,
+            sound_delay: 0,
+            external_id: external_guild.id,
+        })
+        .await
+        .map_err(ApiError::internal)?;
+
+    state
+        .intro_tool_service
+        .add_user_to_guild(guild_id.into(), user.name())
+        .await
+        .map_err(ApiError::internal)?;
+
+    Ok(Redirect::to(&format!(
+        "{}/guild/{}",
+        state.origin,
+        new_guild.id()
+    )))
 }

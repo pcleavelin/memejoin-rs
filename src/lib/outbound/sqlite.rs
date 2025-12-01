@@ -146,20 +146,26 @@ impl IntroToolRepository for Sqlite {
 
         let users = query
             .query_map(&[(":guild_id", &guild_id.to_string())], |row| {
+                let app_permissions = row
+                    .get::<_, Option<u8>>(1)?
+                    .map(AppPermissions)
+                    .unwrap_or_default();
+                let guild_permissions = row
+                    .get::<_, Option<u8>>(2)?
+                    .map(Permissions)
+                    .unwrap_or_default()
+                    .with(app_permissions);
+
                 Ok((
                     User::new(
                         UserName::from(row.get::<_, String>(0)?),
-                        row.get::<_, Option<u8>>(1)?
-                            .map(AppPermissions)
-                            .unwrap_or_default(),
+                        app_permissions,
                         row.get(3)?,
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
                     ),
-                    row.get::<_, Option<u8>>(2)?
-                        .map(Permissions)
-                        .unwrap_or_default(),
+                    guild_permissions,
                 ))
             })
             .context("failed to map prepared query")?

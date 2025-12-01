@@ -70,7 +70,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         expires_at: NaiveDateTime,
     ) -> impl Future<Output = Result<(), GetUserError>> + Send;
 
-    async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
+    fn create_guild(
+        &self,
+        req: CreateGuildRequest,
+    ) -> impl Future<Output = Result<Guild, CreateGuildError>> + Send;
 
     fn create_user(
         &self,
@@ -156,7 +159,10 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         req: AddIntroToUserRequest,
     ) -> impl Future<Output = Result<(), AddIntroToUserError>> + Send;
 
-    async fn create_guild(&self, req: CreateGuildRequest) -> Result<Guild, CreateGuildError>;
+    fn create_guild(
+        &self,
+        req: CreateGuildRequest,
+    ) -> impl Future<Output = Result<Guild, CreateGuildError>> + Send;
 
     fn create_user(
         &self,
