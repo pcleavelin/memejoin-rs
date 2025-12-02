@@ -51,6 +51,8 @@ pub enum Tag {
     UnorderedList,
     ListItem,
 
+    HorizontalRule,
+
     Anchor,
     Button,
 
@@ -114,6 +116,8 @@ impl Tag {
             Self::UnorderedList => "ul",
             Self::ListItem => "li",
 
+            Self::HorizontalRule => "hr",
+
             Self::Anchor => "a",
             Self::Button => "button",
 
@@ -143,6 +147,7 @@ impl Tag {
             && *self != Self::Empty
             && *self != Self::Link
             && *self != Self::Input
+            && *self != Self::HorizontalRule
         {
             format!("</{}>", self.as_str())
         } else {

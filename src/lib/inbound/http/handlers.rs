@@ -1,6 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use axum::{
+    Form,
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, HeaderValue},
     response::{Html, Redirect},
@@ -106,6 +107,22 @@ impl FromApi<Multipart, GuildId> for AddIntroToGuildRequest {
             name: name.to_string(),
             volume: 0,
             data: IntroRequestData::Data(file.to_vec()),
+        })
+    }
+}
+
+impl FromApi<Form<SetUserIntroForm>, (GuildId, UserName, ChannelName)> for AddIntroToUserRequest {
+    async fn from_api(
+        value: Form<SetUserIntroForm>,
+        (guild_id, user, channel_name): (GuildId, UserName, ChannelName),
+    ) -> Result<Self, ApiError> {
+        let intro_id = value.0.intro.into();
+
+        Ok(Self {
+            user,
+            guild_id,
+            channel_name,
+            intro_id,
         })
     }
 }
@@ -234,11 +251,16 @@ pub(super) async fn upload_guild_intro<S: IntroToolService>(
     Ok(headers)
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct SetUserIntroForm {
+    intro: i32,
+}
+
 pub(super) async fn set_user_intro<S: IntroToolService>(
     State(state): State<ApiState<S>>,
     Path((guild_id, channel)): Path<(u64, String)>,
     user: User,
-    form_data: Multipart,
+    form_data: Form<SetUserIntroForm>,
 ) -> Result<Html<String>, ApiError> {
     let req = form_data
         .into_domain((

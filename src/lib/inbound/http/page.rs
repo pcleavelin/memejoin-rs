@@ -240,7 +240,8 @@ pub async fn guild_dashboard<S: IntroToolService>(
                                         Tag::Div,
                                         |b| {
                                             b.attribute("id", "channel-intro-selector")
-                                                .attribute("style", "display: flex; align-items: flex-end; max-height: 50%; overflow: hidden;")
+                                                //.attribute("class", "grid")
+                                                .attribute("style", "display: flex; flex-direction: column; align-items: center; max-height: 50%; overflow: hidden;")
                                                 .push_builder(channel_intro_selector(
                                                     &state.origin,
                                                     guild_id,
@@ -435,20 +436,28 @@ pub fn channel_intro_selector<'a>(
 ) -> HtmxBuilder {
     HtmxBuilder::new(Tag::Empty)
         .builder(Tag::Div, |b| {
-            b.attribute("style", "display: flex; flex-direction: column; justify-content: space-between; align-items: center; width: 100%; height: 100%; padding: 16px;")
-                .builder_text(Tag::Strong, "Your Current Intros")
-                .push_builder(intro_list(
-                    intros,
-                    "Remove Intro",
-                    &format!("{}/v2/intros/remove/{}/{}", origin, guild_id, channel_name.as_ref()),
-                ))
+            b.attribute("style", "width: 100%; padding: 16px; text-align: center;")
+                .builder(Tag::HeaderGroup, |b| {
+                    b.attribute("style", "text-align: center;")
+                        .builder_text(Tag::Header4, "Your Current Intro")
+                })
+            .builder(Tag::Empty, |b| {
+                let mut b = b;
+
+                for intro in intros {
+                    b = b.builder_text(Tag::Paragraph, intro.name());
+                }
+
+                b
+            })
+            .builder(Tag::HorizontalRule, |b| b)
         })
-        .builder(Tag::Div, |b| {
-            b.attribute("style", "display: flex; flex-direction: column; justify-content: space-between; align-items: center; width: 100%; height: 100%; padding: 16px;")
+    .builder(Tag::Div, |b| {
+        b.attribute("style", "display: flex; flex-direction: column; justify-content: space-between; align-items: center; width: 100%; height: 100%; padding: 18px;")
             .builder_text(Tag::Strong, "Select Intros")
                 .push_builder(intro_list(
                     guild_intros,
-                    "Add Intro",
+                    "Select Intro",
                     &format!("{}/v2/intros/add/{}/{}", origin, guild_id, channel_name.as_ref()),
                 ))
         })
@@ -459,18 +468,19 @@ fn intro_list<'a>(intros: impl Iterator<Item = &'a Intro>, label: &str, post: &s
         b.attribute("class", "container")
             .hx_post(post)
             .hx_target("closest #channel-intro-selector")
-            .attribute("hx-encoding", "multipart/form-data")
             .builder(Tag::FieldSet, |b| {
                 let mut b = b
                     .attribute("class", "container")
                     .attribute("style", "height: 256px; overflow: auto");
                 for intro in intros {
                     b = b.builder(Tag::Label, |b| {
-                        b.builder(Tag::Input, |b| {
-                            b.attribute("type", "checkbox")
-                                .attribute("name", &intro.id().to_string())
-                        })
-                        .builder_text(Tag::Paragraph, intro.name())
+                        b.attribute("style", "padding: 4px;")
+                            .builder(Tag::Input, |b| {
+                                b.attribute("type", "radio")
+                                    .attribute("name", "intro")
+                                    .attribute("value", &intro.id().to_string())
+                            })
+                            .builder_text(Tag::Empty, intro.name())
                     });
                 }
 
