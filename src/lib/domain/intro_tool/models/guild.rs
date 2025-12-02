@@ -80,6 +80,12 @@ impl AsRef<str> for ChannelName {
     }
 }
 
+impl AsRef<u64> for GuildId {
+    fn as_ref(&self) -> &u64 {
+        &self.0
+    }
+}
+
 impl std::fmt::Display for GuildId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -296,6 +302,10 @@ impl Intro {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn filename(&self) -> &str {
+        &self.filename
     }
 }
 

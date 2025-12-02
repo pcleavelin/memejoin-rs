@@ -2,6 +2,8 @@ mod db;
 pub mod settings;
 
 use memejoin_rs::auth::{AppPermission, AppPermissions};
+use memejoin_rs::domain::intro_tool::ports::IntroToolRepository as _;
+use memejoin_rs::outbound::sqlite::Sqlite;
 use songbird::driver::Bitrate;
 use std::env;
 use std::str::FromStr;
@@ -111,7 +113,7 @@ impl EventHandler for Handler {
     }
 }
 
-async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
+async fn spawn_bot(db: Sqlite) {
     let token = env::var("DISCORD_TOKEN").expect("expected DISCORD_TOKEN env var");
     let songbird = songbird::Songbird::serenity();
 
@@ -145,7 +147,7 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
 
                     let songbird = songbird::get(&ctx).await.expect("no songbird instance");
 
-                    let guilds = match db.lock().await.get_guilds() {
+                    let guilds = match db.get_guilds().await {
                         Ok(guilds) => guilds,
                         Err(err) => {
                             error!(?err, "failed to get guild on bot ready");
@@ -154,7 +156,8 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                     };
 
                     for guild in guilds {
-                        let handler_lock = songbird.get_or_insert(GuildId::new(guild.id));
+                        let handler_lock =
+                            songbird.get_or_insert(GuildId::new(*guild.id().as_ref()));
 
                         let mut handler = handler_lock.lock().await;
 
@@ -162,7 +165,7 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                             songbird::Event::Track(songbird::TrackEvent::End),
                             TrackEventHandler {
                                 tx: tx.clone(),
-                                guild_id: GuildId::new(guild.id),
+                                guild_id: GuildId::new(*guild.id().as_ref()),
                             },
                         );
                     }
@@ -199,11 +202,10 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                         channel.name().to_string()
                     };
 
-                    let intros = match db.lock().await.get_user_channel_intros(
-                        &member.user.name,
-                        guild_id.get(),
-                        &channel_name,
-                    ) {
+                    let guild_channel_intros = match db
+                        .get_user_channel_intros(&member.user.name, guild_id.get().into())
+                        .await
+                    {
                         Ok(intros) => intros,
                         Err(err) => {
                             error!(
@@ -214,13 +216,20 @@ async fn spawn_bot(db: Arc<tokio::sync::Mutex<db::Database>>) {
                         }
                     };
 
+                    let Some(intros) = guild_channel_intros
+                        .get(&(guild_id.get().into(), channel_name.clone().into()))
+                    else {
+                        error!("couldn't get user intro, none exist");
+                        continue;
+                    };
+
                     // TODO: randomly choose a intro to play
                     let Some(intro) = intros.first() else {
                         error!("couldn't get user intro, none exist");
                         continue;
                     };
 
-                    let file = songbird::input::File::new(format!("sounds/{}", &intro.filename));
+                    let file = songbird::input::File::new(format!("sounds/{}", intro.filename()));
                     let compressed_file =
                         match songbird::input::cached::Compressed::new(file.into(), Bitrate::Auto)
                             .await
@@ -280,79 +289,84 @@ async fn main() -> std::io::Result<()> {
     };
     let origin = env::var("APP_ORIGIN").expect("expected APP_ORIGIN");
 
+    let run_api = env::var("RUN_API")
+        .ok()
+        .and_then(|val| {
+            val.parse()
+                .inspect_err(|err| tracing::error!(?err, "failed to parse RUN_BOT var"))
+                .ok()
+        })
+        .unwrap_or_default();
+    let run_bot = env::var("RUN_BOT")
+        .ok()
+        .and_then(|val| {
+            val.parse()
+                .inspect_err(|err| tracing::error!(?err, "failed to parse RUN_BOT var"))
+                .ok()
+        })
+        .unwrap_or_default();
+
+    tracing::info!(?run_bot, ?run_api);
+
     let db = outbound::sqlite::Sqlite::new("./config/db.sqlite").expect("couldn't open sqlite db");
     let local_audio_fetcher = outbound::ffmpeg::Ffmpeg;
     let remote_audio_fetcher = outbound::ytdlp::Ytdlp;
 
-    if let Ok(impersonated_username) = env::var("IMPERSONATED_USERNAME") {
-        let test_permissions = env::var("TEST_PERMISSIONS")
-            .map(|s| {
-                s.split(',').map(AppPermission::from_str).fold(
-                    AppPermissions::default(),
-                    |mut acc, perm| {
-                        acc.add(perm.expect("unknown permission"));
-                        acc
-                    },
-                )
-            })
-            .unwrap_or_default();
-
-        let service =
-            intro_tool::service::Service::new(db, remote_audio_fetcher, local_audio_fetcher);
-        let service = intro_tool::debug_service::DebugService::new(
-            service,
-            impersonated_username,
-            test_permissions,
-        );
-
-        let http_server = inbound::http::HttpServer::new(service, secrets, origin)
-            .expect("couldn't start http server");
-
-        http_server.run().await;
-    } else {
-        let service =
-            intro_tool::service::Service::new(db, remote_audio_fetcher, local_audio_fetcher);
-
-        let http_server = inbound::http::HttpServer::new(service, secrets, origin)
-            .expect("couldn't start http server");
-
-        http_server.run().await;
+    if run_bot {
+        spawn_bot(db.clone()).await;
     }
 
-    Ok(())
+    if run_api {
+        if let Ok(impersonated_username) = env::var("IMPERSONATED_USERNAME") {
+            let test_permissions = env::var("TEST_PERMISSIONS")
+                .map(|s| {
+                    s.split(',').map(AppPermission::from_str).fold(
+                        AppPermissions::default(),
+                        |mut acc, perm| {
+                            acc.add(perm.expect("unknown permission"));
+                            acc
+                        },
+                    )
+                })
+                .unwrap_or_default();
 
-    // dotenv::dotenv().ok();
-    //
-    // tracing_subscriber::fmt::init();
-    //
-    // let settings = serde_json::from_str::<Settings>(
-    //     &std::fs::read_to_string("config/settings.json").expect("no config/settings.json"),
-    // )
-    // .expect("error parsing settings file");
-    // info!("{settings:?}");
-    //
-    // let (run_api, run_bot) = (settings.run_api, settings.run_bot);
-    // let db = Arc::new(tokio::sync::Mutex::new(
-    //     db::Database::new("./config/db.sqlite").expect("couldn't open sqlite db"),
-    // ));
-    //
-    // {
-    //     // attempt to initialize the database with the schema
-    //     let db = db.lock().await;
-    //     db.init().expect("couldn't init db");
-    // }
-    //
-    // if run_api {
-    //     spawn_api(db.clone());
-    // }
-    // if run_bot {
-    //     spawn_bot(db).await;
-    // }
-    //
-    // info!("spawned background tasks");
-    //
-    // let _ = tokio::signal::ctrl_c().await;
-    // info!("Received Ctrl-C, shuttdown down.");
-    //
-    // Ok(())
+            let service = intro_tool::service::Service::new(
+                db.clone(),
+                remote_audio_fetcher,
+                local_audio_fetcher,
+            );
+            let service = intro_tool::debug_service::DebugService::new(
+                service,
+                impersonated_username,
+                test_permissions,
+            );
+
+            let http_server = inbound::http::HttpServer::new(service, secrets, origin)
+                .expect("couldn't start http server");
+
+            tokio::spawn(async move {
+                http_server.run().await;
+            });
+        } else {
+            let service = intro_tool::service::Service::new(
+                db.clone(),
+                remote_audio_fetcher,
+                local_audio_fetcher,
+            );
+
+            let http_server = inbound::http::HttpServer::new(service, secrets, origin)
+                .expect("couldn't start http server");
+
+            tokio::spawn(async move {
+                http_server.run().await;
+            });
+        }
+    }
+
+    info!("spawned background tasks");
+
+    let _ = tokio::signal::ctrl_c().await;
+    info!("Received Ctrl-C, shutting down.");
+
+    Ok(())
 }
