@@ -596,11 +596,20 @@ impl IntroToolRepository for Sqlite {
         Ok(())
     }
 
-    async fn create_channel(
-        &self,
-        req: CreateChannelRequest,
-    ) -> Result<Channel, CreateChannelError> {
-        todo!()
+    async fn create_channels(&self, req: CreateChannelRequest) -> Result<(), CreateChannelError> {
+        let conn = self.conn.lock().await;
+
+        for channel in req.channels {
+            conn.execute(
+                "
+            INSERT OR IGNORE INTO Channel (name, guild_id) VALUES (?1, ?2)
+            ",
+                [channel.as_ref(), req.guild_id.to_string().as_ref()],
+            )
+            .context("failed to insert channel")?;
+        }
+
+        Ok(())
     }
 
     async fn add_intro_to_guild(

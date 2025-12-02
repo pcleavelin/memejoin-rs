@@ -21,7 +21,9 @@ use crate::{
         http::ApiState,
         response::{ApiError, ErrorAsRedirect, PageError},
     },
-    outbound::discord::{DiscordAuthParams, DiscordService},
+    outbound::discord::{
+        DiscordAuthParams, DiscordChannel, DiscordGuildChannelsRequest, DiscordService,
+    },
 };
 
 pub async fn home<S: IntroToolService>(
@@ -74,6 +76,7 @@ pub async fn home<S: IntroToolService>(
                 b.attribute("class", "container")
                     .builder_text(Tag::Header2, "Choose a Guild")
                     .push_builder(guild_list(&state.origin, user_guilds.iter()))
+                    .push_builder(error_container("this is a test"))
             })
         };
 
@@ -176,7 +179,7 @@ pub async fn guild_dashboard<S: IntroToolService>(
     let can_upload = user_guild_perms.can(auth::Permission::UploadSounds);
     let mod_dashboard = moderator_dashboard(
         &state,
-        &state.secrets.bot_token,
+        state.secrets.bot_token.clone(),
         guild_id.into(),
         user_guild_perms,
     )
@@ -264,21 +267,23 @@ pub async fn guild_dashboard<S: IntroToolService>(
 
 async fn moderator_dashboard<S: IntroToolService>(
     state: &ApiState<S>,
-    bot_token: &str,
+    bot_token: String,
     guild_id: GuildId,
     user_permissions: auth::Permissions,
 ) -> HtmxBuilder {
     let permissions_editor = permissions_editor(state, guild_id).await;
-    //let channel_editor = channel_editor(state, bot_token, guild_id).await;
+    let channel_editor = channel_editor(state, bot_token, guild_id).await;
 
     let mut b = HtmxBuilder::new(Tag::Empty);
 
     if user_permissions.can(auth::Permission::Moderator) {
         b = b.push_builder(permissions_editor);
     }
-    //if user_permissions.can(auth::Permission::AddChannel) {
-    //    b = b.push_builder(channel_editor);
-    //}
+    if user_permissions.can(auth::Permission::AddChannel) {
+        b = b.push_builder(match channel_editor {
+            Ok(b) | Err(b) => b,
+        });
+    }
 
     b
 }
@@ -353,6 +358,64 @@ async fn permissions_editor<S: IntroToolService>(
             })
             .button(|b| b.attribute("type", "submit").text("Update Permissions"))
         })
+}
+
+async fn channel_editor<S: IntroToolService>(
+    state: &ApiState<S>,
+    bot_token: String,
+    guild_id: GuildId,
+) -> Result<HtmxBuilder, HtmxBuilder> {
+    let added_guild_channels = state
+        .intro_tool_service
+        .get_guild_channels(guild_id)
+        .await
+        .unwrap_or_default();
+
+    let unadded_channels: Vec<String> = state
+        .intro_tool_service
+        .get_external_guild_channels::<DiscordService>(DiscordGuildChannelsRequest {
+            guild_id: *guild_id.as_ref(),
+            bot_token,
+        })
+        .await
+        .map_err(|err| error_container("failed to get guild channels"))?
+        .into_iter()
+        .map(|external_channel| external_channel.name)
+        .filter(|external_channel_name| {
+            !added_guild_channels
+                .iter()
+                .any(|channel| channel.name().as_ref() == external_channel_name)
+        })
+        .collect();
+
+    if !unadded_channels.is_empty() {
+        Ok(HtmxBuilder::new(Tag::Details)
+            .builder_text(Tag::Summary, "Add Channels")
+            .form(|b| {
+                b.attribute("class", "container")
+                    .hx_post(&format!("{}/guild/{}/add_channel", state.origin, guild_id))
+                    .attribute("hx-encoding", "multipart/form-data")
+                    .builder(Tag::FieldSet, |b| {
+                        let mut b = b
+                            .attribute("class", "container")
+                            .attribute("style", "max-height: 50%; overflow-y: scroll");
+                        for channel_name in unadded_channels {
+                            b = b.builder(Tag::Label, |b| {
+                                b.builder(Tag::Input, |b| {
+                                    b.attribute("type", "checkbox")
+                                        .attribute("name", &channel_name.to_string())
+                                })
+                                .builder_text(Tag::Paragraph, &channel_name)
+                            });
+                        }
+
+                        b
+                    })
+                    .button(|b| b.attribute("type", "submit").text("Add Channel"))
+            }))
+    } else {
+        Ok(HtmxBuilder::new(Tag::Empty))
+    }
 }
 
 pub async fn auth<S: IntroToolService>(
@@ -525,5 +588,15 @@ fn ytdl_form(origin: &str, guild_id: u64) -> HtmxBuilder {
                     })
                     .button(|b| b.attribute("type", "submit").text("Upload"))
             })
+    })
+}
+
+fn error_container(msg: impl ToString) -> HtmxBuilder {
+    HtmxBuilder::new(Tag::Empty).builder(Tag::Article, |b| {
+        b.builder(Tag::Header, |b| {
+            b.builder_text(Tag::Empty, "an error occured")
+                .attribute("style", "color: red;")
+        })
+        .builder_text(Tag::Paragraph, &msg.to_string())
     })
 }

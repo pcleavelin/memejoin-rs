@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use chrono::{Duration, NaiveDateTime, Utc};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 use crate::domain::intro_tool::{
-    models::guild::{ExternalGuild, ExternalGuildId, UserName},
+    models::guild::{ExternalChannel, ExternalGuild, ExternalGuildId, UserName},
     ports::{AuthService, ExternalUser},
 };
 
@@ -57,12 +57,36 @@ struct DiscordUserGuild {
     owner: bool,
 }
 
+#[derive(Serialize)]
+pub struct DiscordGuildChannelsRequest {
+    pub guild_id: u64,
+    pub bot_token: String,
+}
+
+#[derive(Deserialize)]
+pub struct DiscordChannel {
+    #[serde(rename = "type")]
+    pub ty: u32,
+
+    pub name: Option<String>,
+}
+
+#[derive(PartialEq, Eq)]
+#[repr(u32)]
+enum ChannelType {
+    GuildText = 0,
+    GuildVoice = 2,
+}
+
 impl AuthService for DiscordService {
     type Params = DiscordAuthParams;
     type User = DiscordUser;
     type Error = DiscordError;
 
+    type Channel = DiscordChannel;
+
     type ListGuildsRequest = String;
+    type ListGuildChannelsRequest = DiscordGuildChannelsRequest;
 
     async fn authenticate_user(params: Self::Params) -> Result<Self::User, Self::Error> {
         let mut data = HashMap::new();
@@ -129,6 +153,28 @@ impl AuthService for DiscordService {
                 id: ExternalGuildId(guild.id),
                 name: guild.name,
             })
+            .collect())
+    }
+
+    async fn get_guild_channels(
+        req: Self::ListGuildChannelsRequest,
+    ) -> Result<Vec<ExternalChannel>, Self::Error> {
+        let client = reqwest::Client::new();
+
+        Ok(client
+            .get(format!(
+                "https://discord.com/api/v10/guilds/{}/channels",
+                req.guild_id
+            ))
+            .header("Authorization", format!("Bot {}", req.bot_token))
+            .send()
+            .await?
+            .json::<Vec<Self::Channel>>()
+            .await?
+            .into_iter()
+            .filter(|channel| channel.ty == ChannelType::GuildVoice as u32)
+            .filter_map(|channel| channel.name)
+            .map(|name| ExternalChannel { name })
             .collect())
     }
 }

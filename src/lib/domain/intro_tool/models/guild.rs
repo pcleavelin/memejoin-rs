@@ -1,4 +1,7 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 use chrono::NaiveDateTime;
 use thiserror::Error;
@@ -194,6 +197,9 @@ pub struct ExternalGuild {
     pub id: ExternalGuildId,
     pub name: String,
 }
+pub struct ExternalChannel {
+    pub name: String,
+}
 
 #[derive(Debug)]
 pub struct User {
@@ -325,7 +331,7 @@ pub struct CreateUserRequest {
 
 pub struct CreateChannelRequest {
     pub guild_id: GuildId,
-    pub channel_name: ChannelName,
+    pub channels: HashSet<ChannelName>,
 }
 
 pub struct AddIntroToGuildRequest {

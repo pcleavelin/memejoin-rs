@@ -3,7 +3,10 @@ use chrono::{Duration, NaiveDateTime, Utc};
 use crate::{
     auth::{AppPermissions, Permissions},
     domain::intro_tool::{
-        models::{self, guild::IntroId},
+        models::{
+            self,
+            guild::{ExternalChannel, ExternalGuild, IntroId},
+        },
         ports::IntroToolService,
     },
 };
@@ -65,6 +68,13 @@ where
         self.wrapped_service.get_guilds().await
     }
 
+    async fn get_guild_channels(
+        &self,
+        guild_id: models::guild::GuildId,
+    ) -> Result<Vec<models::guild::Channel>, models::guild::GetChannelError> {
+        self.wrapped_service.get_guild_channels(guild_id).await
+    }
+
     async fn get_guild_users(
         &self,
         guild_id: models::guild::GuildId,
@@ -103,6 +113,15 @@ where
             .await
     }
 
+    async fn get_external_guild_channels<A: AuthService>(
+        &self,
+        req: A::ListGuildChannelsRequest,
+    ) -> Result<Vec<ExternalChannel>, A::Error> {
+        self.wrapped_service
+            .get_external_guild_channels::<A>(req)
+            .await
+    }
+
     async fn get_user_from_api_key(
         &self,
         _api_key: &str,
@@ -123,13 +142,6 @@ where
         .with_channel_intros(user.intros().clone()))
     }
 
-    async fn set_user_intro(
-        &self,
-        req: models::guild::AddIntroToUserRequest,
-    ) -> Result<(), models::guild::AddIntroToUserError> {
-        self.wrapped_service.set_user_intro(req).await
-    }
-
     async fn set_user_guild_permissions(
         &self,
         username: &str,
@@ -139,6 +151,13 @@ where
         self.wrapped_service
             .set_user_guild_permissions(username, guild_id, permissions)
             .await
+    }
+
+    async fn set_user_intro(
+        &self,
+        req: models::guild::AddIntroToUserRequest,
+    ) -> Result<(), models::guild::AddIntroToUserError> {
+        self.wrapped_service.set_user_intro(req).await
     }
 
     async fn refresh_user_token(
@@ -183,11 +202,11 @@ where
             .await
     }
 
-    async fn create_channel(
+    async fn create_channels(
         &self,
         req: models::guild::CreateChannelRequest,
-    ) -> Result<models::guild::Channel, models::guild::CreateChannelError> {
-        self.wrapped_service.create_channel(req).await
+    ) -> Result<(), models::guild::CreateChannelError> {
+        self.wrapped_service.create_channels(req).await
     }
 
     async fn add_intro_to_guild(

@@ -127,6 +127,10 @@ where
             "/v2/intros/add/:guild_id/:channel",
             post(handlers::set_user_intro),
         )
+        .route(
+            "/guild/:guild_id/add_channel",
+            post(handlers::guild_add_channel),
+        )
         .route("/guild/:guild_id/setup", get(handlers::guild_setup))
         .route(
             "/guild/:guild_id/permissions/update",

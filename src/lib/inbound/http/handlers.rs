@@ -1,4 +1,7 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::{HashMap, HashSet},
+    str::FromStr,
+};
 
 use axum::{
     Form,
@@ -12,8 +15,9 @@ use crate::{
     auth::{AppPermission, Permission, Permissions},
     domain::intro_tool::{
         models::guild::{
-            AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, CreateGuildRequest,
-            GuildId, IntroRequestData, UpdateUserGuildPermissionsRequest, User, UserName,
+            AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, CreateChannelRequest,
+            CreateGuildRequest, GuildId, IntroRequestData, UpdateUserGuildPermissionsRequest, User,
+            UserName,
         },
         ports::IntroToolService,
     },
@@ -184,6 +188,22 @@ impl FromApi<Multipart, GuildId> for UpdateUserGuildPermissionsRequest {
             guild_id,
             permissions,
         })
+    }
+}
+
+impl FromApi<Multipart, GuildId> for CreateChannelRequest {
+    async fn from_api(mut form_data: Multipart, guild_id: GuildId) -> Result<Self, ApiError> {
+        let mut channels = HashSet::new();
+
+        while let Ok(Some(field)) = form_data.next_field().await {
+            let Some(field_name) = field.name() else {
+                continue;
+            };
+
+            channels.insert(field_name.to_string().into());
+        }
+
+        Ok(Self { guild_id, channels })
     }
 }
 
@@ -397,6 +417,36 @@ pub(super) async fn update_guild_permissions<S: IntroToolService>(
             .set_user_guild_permissions(username.as_str(), guild_id.into(), permissions)
             .await?;
     }
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+
+    Ok(headers)
+}
+
+pub(super) async fn guild_add_channel<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path(guild_id): Path<u64>,
+    user: User,
+    form_data: Multipart,
+) -> Result<HeaderMap, ApiError> {
+    let Some((_, user_permissions)) = state
+        .intro_tool_service
+        .get_guild_users(guild_id.into())
+        .await?
+        .into_iter()
+        .find(|(guild_user, _)| guild_user.name() == user.name())
+    else {
+        return Err(ApiError::forbidden("invalid user"));
+    };
+
+    if !user_permissions.can(Permission::AddChannel) {
+        return Err(ApiError::forbidden("invalid permissions"));
+    }
+
+    let req: CreateChannelRequest = form_data.into_domain(guild_id.into()).await?;
+
+    state.intro_tool_service.create_channels(req).await?;
 
     let mut headers = HeaderMap::new();
     headers.insert("HX-Refresh", HeaderValue::from_static("true"));

@@ -6,8 +6,8 @@ use crate::{
     auth::{AppPermission, AppPermissions, Permissions},
     domain::intro_tool::{
         models::guild::{
-            self, ApiToken, AutheticateUserError, CreateUserRequest, ExternalGuild, GetUserError,
-            GuildId, IntroId, User,
+            self, ApiToken, AutheticateUserError, Channel, ChannelName, CreateUserRequest,
+            ExternalChannel, ExternalGuild, GetUserError, GuildId, IntroId, User,
         },
         ports::{
             ExternalUser, IntroToolRepository, IntroToolService, LocalAudioFetcher,
@@ -157,6 +157,13 @@ where
         self.repo.get_guilds().await
     }
 
+    async fn get_guild_channels(
+        &self,
+        guild_id: GuildId,
+    ) -> Result<Vec<Channel>, guild::GetChannelError> {
+        self.repo.get_guild_channels(guild_id).await
+    }
+
     async fn get_guild_users(
         &self,
         guild_id: GuildId,
@@ -190,6 +197,13 @@ where
         req: <A as AuthService>::ListGuildsRequest,
     ) -> Result<Vec<ExternalGuild>, A::Error> {
         A::get_guilds(req).await
+    }
+
+    async fn get_external_guild_channels<A: AuthService>(
+        &self,
+        req: A::ListGuildChannelsRequest,
+    ) -> Result<Vec<ExternalChannel>, A::Error> {
+        A::get_guild_channels(req).await
     }
 
     async fn get_user_from_api_key(&self, api_key: &str) -> Result<User, GetUserError> {
@@ -271,11 +285,11 @@ where
         self.repo.add_user_to_guild(guild_id, username).await
     }
 
-    async fn create_channel(
+    async fn create_channels(
         &self,
         req: guild::CreateChannelRequest,
-    ) -> Result<guild::Channel, guild::CreateChannelError> {
-        self.repo.create_channel(req).await
+    ) -> Result<(), guild::CreateChannelError> {
+        self.repo.create_channels(req).await
     }
 
     async fn add_intro_to_guild(

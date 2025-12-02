@@ -5,7 +5,8 @@ use chrono::NaiveDateTime;
 use crate::{
     auth::{AppPermissions, Permissions},
     domain::intro_tool::models::guild::{
-        AddUserToGuildError, AutheticateUserError, ExternalGuild, ExternalGuildId, UserName,
+        AddUserToGuildError, AutheticateUserError, ExternalChannel, ExternalGuild, ExternalGuildId,
+        UserName,
     },
 };
 
@@ -29,6 +30,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         guild_id: impl Into<GuildId> + Send,
     ) -> impl Future<Output = Result<Guild, GetGuildError>> + Send;
     fn get_guilds(&self) -> impl Future<Output = Result<Vec<GuildRef>, GetGuildError>> + Send;
+    fn get_guild_channels(
+        &self,
+        guild_id: GuildId,
+    ) -> impl Future<Output = Result<Vec<Channel>, GetChannelError>> + Send;
     fn get_guild_users(
         &self,
         guild_id: GuildId,
@@ -49,6 +54,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         req: A::ListGuildsRequest,
     ) -> impl Future<Output = Result<Vec<ExternalGuild>, A::Error>> + Send;
+    fn get_external_guild_channels<A: AuthService>(
+        &self,
+        req: A::ListGuildChannelsRequest,
+    ) -> impl Future<Output = Result<Vec<ExternalChannel>, A::Error>> + Send;
     fn get_user_from_api_key(
         &self,
         api_key: &str,
@@ -93,10 +102,10 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         username: &str,
     ) -> impl Future<Output = Result<(), AddUserToGuildError>> + Send;
 
-    async fn create_channel(
+    fn create_channels(
         &self,
         req: CreateChannelRequest,
-    ) -> Result<Channel, CreateChannelError>;
+    ) -> impl Future<Output = Result<(), CreateChannelError>> + Send;
 
     fn add_intro_to_guild(
         &self,
@@ -195,10 +204,10 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         username: &str,
     ) -> impl Future<Output = Result<(), AddUserToGuildError>> + Send;
 
-    async fn create_channel(
+    fn create_channels(
         &self,
         req: CreateChannelRequest,
-    ) -> Result<Channel, CreateChannelError>;
+    ) -> impl Future<Output = Result<(), CreateChannelError>> + Send;
 
     fn add_intro_to_guild(
         &self,
@@ -219,7 +228,10 @@ pub trait AuthService: Send + Sync + Clone + 'static {
     type User: ExternalUser + Send;
     type Error: std::error::Error + Send;
 
+    type Channel: Send;
+
     type ListGuildsRequest: Send;
+    type ListGuildChannelsRequest: Send;
 
     fn authenticate_user(
         params: Self::Params,
@@ -228,6 +240,10 @@ pub trait AuthService: Send + Sync + Clone + 'static {
     fn get_guilds(
         req: Self::ListGuildsRequest,
     ) -> impl Future<Output = Result<Vec<ExternalGuild>, Self::Error>> + Send;
+
+    fn get_guild_channels(
+        req: Self::ListGuildChannelsRequest,
+    ) -> impl Future<Output = Result<Vec<ExternalChannel>, Self::Error>> + Send;
 }
 
 pub trait RemoteAudioFetcher: Send + Sync + Clone + 'static {
