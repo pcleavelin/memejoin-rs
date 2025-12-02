@@ -307,6 +307,10 @@ pub struct CreateGuildRequest {
 
 pub struct CreateUserRequest {
     pub user: UserName,
+    pub api_key: uuid::Uuid,
+    pub expires_at: NaiveDateTime,
+    pub external_token: String,
+    pub external_token_expires_at: NaiveDateTime,
 }
 
 pub struct CreateChannelRequest {
@@ -332,6 +336,11 @@ pub struct AddIntroToUserRequest {
     pub guild_id: GuildId,
     pub channel_name: ChannelName,
     pub intro_id: IntroId,
+}
+
+pub struct UpdateUserGuildPermissionsRequest {
+    pub guild_id: GuildId,
+    pub permissions: HashMap<String, Permissions>,
 }
 
 #[derive(Debug, Error)]

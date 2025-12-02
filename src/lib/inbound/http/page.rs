@@ -57,11 +57,18 @@ pub async fn home<S: IntroToolService>(
         };
 
         let guild_list = if needs_setup {
-            HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
-                b.attribute("class", "container")
-                    .builder_text(Tag::Header2, "Select a Guild to setup")
-                    .push_builder(setup_guild_list(&state.origin, &discord_guilds))
-            })
+            if can_add_guild {
+                HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
+                    b.attribute("class", "container")
+                        .builder_text(Tag::Header2, "Select a Guild to setup")
+                        .push_builder(setup_guild_list(&state.origin, &discord_guilds))
+                })
+            } else {
+                HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
+                    b.attribute("class", "container")
+                        .builder_text(Tag::Paragraph, "Looks like there aren't any guilds yet.")
+                })
+            }
         } else {
             HtmxBuilder::new(Tag::Empty).builder(Tag::Div, |b| {
                 b.attribute("class", "container")

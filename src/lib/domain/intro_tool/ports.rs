@@ -3,7 +3,7 @@ use std::{collections::HashMap, future::Future};
 use chrono::NaiveDateTime;
 
 use crate::{
-    auth::Permissions,
+    auth::{AppPermissions, Permissions},
     domain::intro_tool::models::guild::{
         AddUserToGuildError, AutheticateUserError, ExternalGuild, ExternalGuildId, UserName,
     },
@@ -53,6 +53,13 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         api_key: &str,
     ) -> impl Future<Output = Result<User, GetUserError>> + Send;
+
+    fn set_user_guild_permissions(
+        &self,
+        username: &str,
+        guild_id: GuildId,
+        permissions: Permissions,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
 
     fn set_user_intro(
         &self,
@@ -152,6 +159,19 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         username: &str,
         token: &str,
         expires_at: NaiveDateTime,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
+
+    fn set_user_app_permissions(
+        &self,
+        username: &str,
+        app_permissions: AppPermissions,
+    ) -> impl Future<Output = Result<(), GetUserError>> + Send;
+
+    fn set_user_guild_permissions(
+        &self,
+        username: &str,
+        guild_id: GuildId,
+        permissions: Permissions,
     ) -> impl Future<Output = Result<(), GetUserError>> + Send;
 
     fn set_user_intro(

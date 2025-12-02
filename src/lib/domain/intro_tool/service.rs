@@ -3,7 +3,7 @@ use iter_tools::Itertools;
 use uuid::Uuid;
 
 use crate::{
-    auth::Permissions,
+    auth::{AppPermission, AppPermissions, Permissions},
     domain::intro_tool::{
         models::guild::{
             self, ApiToken, AutheticateUserError, CreateUserRequest, ExternalGuild, GetUserError,
@@ -67,15 +67,19 @@ where
             .await
             .map_err(AutheticateUserError::ExternalError)?;
 
+        let needs_setup = self.needs_setup().await;
+
         let guilds = self.get_guilds().await?;
         let external_user_guilds = guilds
             .iter()
             .filter(|guild| external_user.guilds().contains(&guild.external_id()))
             .collect::<Vec<_>>();
 
-        if external_user_guilds.is_empty() {
+        if !needs_setup && external_user_guilds.is_empty() {
             return Err(AutheticateUserError::UserNotPartOfInstanceGuilds);
         }
+
+        tracing::debug!("before first get_user");
 
         let user = match self.get_user(external_user.username()).await {
             Ok(user) => Some(user),
@@ -84,6 +88,8 @@ where
             Err(err) => return Err(AutheticateUserError::CouldNotFetchUser(err)),
         };
 
+        tracing::debug!("before create user and refresh_user_token");
+
         match user {
             Some(user) => {
                 self.refresh_user_token(user.name()).await?;
@@ -91,14 +97,29 @@ where
             None => {
                 self.create_user(CreateUserRequest {
                     user: external_user.username().clone(),
+                    api_key: Uuid::new_v4(),
+                    expires_at: Utc::now().naive_utc() + Duration::weeks(4),
+                    external_token: external_user.external_token().to_string(),
+                    external_token_expires_at: external_user.external_token_expires_at(),
                 })
                 .await?;
             }
         }
 
+        tracing::debug!("before get_user");
+
         let user = self.get_user(external_user.username()).await?;
+
+        if needs_setup {
+            self.repo
+                .set_user_app_permissions(user.name(), AppPermissions(AppPermission::all()))
+                .await?;
+        }
+
+        tracing::debug!("before get_user_guilds");
         let user_guilds = self.get_user_guilds(user.name()).await?;
 
+        tracing::debug!("before refresh_user_external_token");
         self.refresh_user_external_token(
             user.name(),
             external_user.external_token(),
@@ -117,6 +138,7 @@ where
                         .contains(user_guild_id)
                 });
 
+        tracing::debug!("before add_user_to_guild");
         for guild in guilds_to_add_user {
             self.add_user_to_guild(guild, user.name()).await?;
         }
@@ -174,6 +196,17 @@ where
         self.repo.get_user_from_api_key(api_key).await
     }
 
+    async fn set_user_guild_permissions(
+        &self,
+        username: &str,
+        guild_id: GuildId,
+        permissions: Permissions,
+    ) -> Result<(), GetUserError> {
+        self.repo
+            .set_user_guild_permissions(username, guild_id, permissions)
+            .await
+    }
+
     async fn set_user_intro(
         &self,
         req: guild::AddIntroToUserRequest,
@@ -206,7 +239,7 @@ where
         expires_at: NaiveDateTime,
     ) -> Result<(), GetUserError> {
         self.repo
-            .set_user_external_token(username, &token, expires_at)
+            .set_user_external_token(username, token, expires_at)
             .await?;
 
         Ok(())

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use axum::{
     extract::{Multipart, Path, Query, State},
@@ -8,11 +8,11 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    auth::AppPermission,
+    auth::{AppPermission, Permission, Permissions},
     domain::intro_tool::{
         models::guild::{
             AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, CreateGuildRequest,
-            GuildId, IntroRequestData, User, UserName,
+            GuildId, IntroRequestData, UpdateUserGuildPermissionsRequest, User, UserName,
         },
         ports::IntroToolService,
     },
@@ -131,6 +131,41 @@ impl FromApi<Multipart, (GuildId, UserName, ChannelName)> for AddIntroToUserRequ
             guild_id,
             channel_name,
             intro_id,
+        })
+    }
+}
+
+impl FromApi<Multipart, GuildId> for UpdateUserGuildPermissionsRequest {
+    async fn from_api(mut value: Multipart, guild_id: GuildId) -> Result<Self, ApiError> {
+        let mut permissions = HashMap::<_, Permissions>::new();
+
+        while let Ok(Some(field)) = value.next_field().await {
+            let Some(field_name) = field.name() else {
+                continue;
+            };
+
+            if let Some((username, permission)) = field_name.split_once('#') {
+                let permission = Permission::from_str(permission)?;
+
+                let username = username.to_string();
+                if field.text().await.map_err(ApiError::bad_request)? == "on" {
+                    permissions
+                        .entry(username.into())
+                        .and_modify(|value| {
+                            value.add(permission);
+                        })
+                        .or_insert_with(|| {
+                            let mut perm = Permissions::default();
+                            perm.add(permission);
+                            perm
+                        });
+                }
+            }
+        }
+
+        Ok(Self {
+            guild_id,
+            permissions,
         })
     }
 }
@@ -304,4 +339,45 @@ pub(super) async fn guild_setup<S: IntroToolService>(
         state.origin,
         new_guild.id()
     )))
+}
+
+pub(super) async fn update_guild_permissions<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path(guild_id): Path<u64>,
+    user: User,
+    form_data: Multipart,
+) -> Result<HeaderMap, ApiError> {
+    if !user.permissions().can(AppPermission::Admin) {
+        return Err(ApiError::forbidden("invalid permissions"));
+    }
+
+    let req: UpdateUserGuildPermissionsRequest = form_data.into_domain(guild_id.into()).await?;
+
+    let guild_users = state
+        .intro_tool_service
+        .get_guild_users(guild_id.into())
+        .await?
+        .iter()
+        .filter(|(_, perms)| !perms.can(Permission::Moderator))
+        .map(|(user, _)| user)
+        .map(|user| {
+            if let Some(new_perms) = req.permissions.get(user.name()) {
+                (user.name().to_string(), *new_perms)
+            } else {
+                (user.name().to_string(), Default::default())
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    for (username, permissions) in guild_users {
+        state
+            .intro_tool_service
+            .set_user_guild_permissions(username.as_str(), guild_id.into(), permissions)
+            .await?;
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert("HX-Refresh", HeaderValue::from_static("true"));
+
+    Ok(headers)
 }

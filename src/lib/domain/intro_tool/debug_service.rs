@@ -1,7 +1,7 @@
 use chrono::{Duration, NaiveDateTime, Utc};
 
 use crate::{
-    auth::AppPermissions,
+    auth::{AppPermissions, Permissions},
     domain::intro_tool::{
         models::{self, guild::IntroId},
         ports::IntroToolService,
@@ -128,6 +128,17 @@ where
         req: models::guild::AddIntroToUserRequest,
     ) -> Result<(), models::guild::AddIntroToUserError> {
         self.wrapped_service.set_user_intro(req).await
+    }
+
+    async fn set_user_guild_permissions(
+        &self,
+        username: &str,
+        guild_id: models::guild::GuildId,
+        permissions: Permissions,
+    ) -> Result<(), models::guild::GetUserError> {
+        self.wrapped_service
+            .set_user_guild_permissions(username, guild_id, permissions)
+            .await
     }
 
     async fn refresh_user_token(

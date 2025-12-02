@@ -128,15 +128,15 @@ where
             post(handlers::set_user_intro),
         )
         .route("/guild/:guild_id/setup", get(handlers::guild_setup))
+        .route(
+            "/guild/:guild_id/permissions/update",
+            post(handlers::update_guild_permissions),
+        )
         .route("/v2/auth", get(page::auth))
 
     // .route(
     //     "/guild/:guild_id/add_channel",
     //     post(routes::guild_add_channel),
-    // )
-    // .route(
-    //     "/guild/:guild_id/permissions/update",
-    //     post(routes::update_guild_permissions),
     // )
     // .route(
     //     "/v2/intros/remove/:guild_id/:channel",

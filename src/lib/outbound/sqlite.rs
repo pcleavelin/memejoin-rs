@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
 
 use anyhow::Context;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::{
     auth::{AppPermissions, Permissions},
@@ -26,8 +26,11 @@ pub struct Sqlite {
 
 impl Sqlite {
     pub fn new(path: &str) -> rusqlite::Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(include_str!("../../db/schema.sql"))?;
+
         Ok(Self {
-            conn: Arc::new(Mutex::new(Connection::open(path)?)),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 }
@@ -268,8 +271,10 @@ impl IntroToolRepository for Sqlite {
                         row.get(5)?,
                     ))
                 })
+                .optional()
                 .context("failed to query row")?
-        };
+        }
+        .ok_or(GetUserError::NotFound)?;
 
         let guilds = self
             .get_user_guilds(username.as_ref())
@@ -439,6 +444,53 @@ impl IntroToolRepository for Sqlite {
         Ok(())
     }
 
+    async fn set_user_app_permissions(
+        &self,
+        username: &str,
+        app_permissions: AppPermissions,
+    ) -> Result<(), GetUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            INSERT INTO
+                UserAppPermission (username, permissions) 
+            VALUES (?1, ?2)
+            ON CONFLICT(username) DO UPDATE SET permissions = ?2
+            ",
+            [username, app_permissions.0.to_string().as_ref()],
+        )
+        .context("failed to update user external token")?;
+
+        Ok(())
+    }
+
+    async fn set_user_guild_permissions(
+        &self,
+        username: &str,
+        guild_id: GuildId,
+        permissions: Permissions,
+    ) -> Result<(), GetUserError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            INSERT INTO
+                UserPermission (username, guild_id, permissions) 
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(username, guild_id) DO UPDATE SET permissions = ?3
+            ",
+            [
+                username,
+                guild_id.to_string().as_ref(),
+                permissions.0.to_string().as_ref(),
+            ],
+        )
+        .context("failed to update user external token")?;
+
+        Ok(())
+    }
+
     async fn set_user_intro(
         &self,
         req: AddIntroToUserRequest,
@@ -510,10 +562,16 @@ impl IntroToolRepository for Sqlite {
         conn.execute(
             "
             INSERT INTO
-                User (username)
-            VALUES (?1)
+                User (username, api_key, api_key_expires_at, discord_token, discord_token_expires_at)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ",
-            [req.user.as_ref()],
+            [
+                req.user.as_ref(),
+                req.api_key.to_string().as_ref(),
+                req.expires_at.to_string().as_ref(),
+                req.external_token.to_string().as_ref(),
+                req.external_token_expires_at.to_string().as_ref(),
+            ],
         )
         .context("failed to insert user")?;
 

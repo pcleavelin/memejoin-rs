@@ -87,7 +87,7 @@ impl Permissions {
         self.0 |= perm as u8;
     }
 
-    pub(crate) fn with(mut self, app_perms: AppPermissions) -> Self {
+    pub(crate) fn with(self, app_perms: AppPermissions) -> Self {
         if app_perms.can(AppPermission::Admin) {
             Self(Permission::all())
         } else {
