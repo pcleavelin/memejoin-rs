@@ -132,7 +132,7 @@ async fn spawn_bot(db: Sqlite) {
         .await
         .expect("Error creating client");
 
-    info!("Starting bot with token '{token}'");
+    info!("Starting bot with token");
     tokio::spawn(async move {
         if let Err(err) = client.start().await {
             error!("An error occurred while running the client: {err:?}");

@@ -7,7 +7,7 @@ use axum::{
     extract::FromRequestParts,
     http::request::Parts,
     response::Redirect,
-    routing::{get, post},
+    routing::{delete, get, patch, post},
 };
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
@@ -126,6 +126,14 @@ where
         .route(
             "/v2/intros/add/:guild_id/:channel",
             post(handlers::set_user_intro),
+        )
+        .route(
+            "/v2/guild/:guild_id/intro/:intro_id",
+            patch(handlers::edit_guild_intro),
+        )
+        .route(
+            "/v2/guild/:guild_id/intro/:intro_id",
+            delete(handlers::delete_guild_intro),
         )
         .route(
             "/guild/:guild_id/add_channel",

@@ -5,8 +5,8 @@ use chrono::NaiveDateTime;
 use crate::{
     auth::{AppPermissions, Permissions},
     domain::intro_tool::models::guild::{
-        AddUserToGuildError, AutheticateUserError, ExternalChannel, ExternalGuild, ExternalGuildId,
-        UserName,
+        AddUserToGuildError, AutheticateUserError, DeleteGuildIntroRequest, ExternalChannel,
+        ExternalGuild, ExternalGuildId, UpdateGuildIntroError, UpdateGuildIntroRequest, UserName,
     },
 };
 
@@ -42,6 +42,11 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         guild_id: GuildId,
     ) -> impl Future<Output = Result<Vec<Intro>, GetIntroError>> + Send;
+    fn get_intro(
+        &self,
+        guild_id: GuildId,
+        intro_id: IntroId,
+    ) -> impl Future<Output = Result<Intro, GetIntroError>> + Send;
     fn get_user(
         &self,
         username: impl AsRef<str> + Send,
@@ -111,6 +116,16 @@ pub trait IntroToolService: Send + Sync + Clone + 'static {
         &self,
         req: AddIntroToGuildRequest,
     ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
+
+    fn edit_guild_intro(
+        &self,
+        req: UpdateGuildIntroRequest,
+    ) -> impl Future<Output = Result<(), UpdateGuildIntroError>> + Send;
+
+    fn delete_intro(
+        &self,
+        req: DeleteGuildIntroRequest,
+    ) -> impl Future<Output = Result<(), UpdateGuildIntroError>> + Send;
 }
 
 pub trait IntroToolRepository: Send + Sync + Clone + 'static {
@@ -134,6 +149,11 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         &self,
         guild_id: GuildId,
     ) -> impl Future<Output = Result<Vec<Intro>, GetIntroError>> + Send;
+    fn get_intro(
+        &self,
+        guild_id: GuildId,
+        intro_id: IntroId,
+    ) -> impl Future<Output = Result<Intro, GetIntroError>> + Send;
 
     fn get_user(
         &self,
@@ -215,6 +235,17 @@ pub trait IntroToolRepository: Send + Sync + Clone + 'static {
         guild_id: GuildId,
         filename: String,
     ) -> impl Future<Output = Result<IntroId, AddIntroToGuildError>> + Send;
+
+    fn edit_intro_name(
+        &self,
+        intro_id: IntroId,
+        name: String,
+    ) -> impl Future<Output = Result<(), UpdateGuildIntroError>> + Send;
+
+    fn delete_intro(
+        &self,
+        intro_id: IntroId,
+    ) -> impl Future<Output = Result<(), UpdateGuildIntroError>> + Send;
 }
 
 pub trait ExternalUser: Send + Sync + Clone + 'static {
@@ -260,4 +291,9 @@ pub trait LocalAudioFetcher: Send + Sync + Clone + 'static {
         bytes: &[u8],
         name: &str,
     ) -> impl Future<Output = Result<String, anyhow::Error>> + Send;
+
+    fn delete_local_audio(
+        &self,
+        name: &str,
+    ) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
 }

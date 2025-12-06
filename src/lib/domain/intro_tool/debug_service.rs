@@ -5,7 +5,10 @@ use crate::{
     domain::intro_tool::{
         models::{
             self,
-            guild::{ExternalChannel, ExternalGuild, IntroId},
+            guild::{
+                DeleteGuildIntroRequest, ExternalChannel, ExternalGuild, GuildId, IntroId,
+                UpdateGuildIntroError, UpdateGuildIntroRequest,
+            },
         },
         ports::IntroToolService,
     },
@@ -88,6 +91,14 @@ where
         guild_id: models::guild::GuildId,
     ) -> Result<Vec<models::guild::Intro>, models::guild::GetIntroError> {
         self.wrapped_service.get_guild_intros(guild_id).await
+    }
+
+    async fn get_intro(
+        &self,
+        guild_id: GuildId,
+        intro_id: IntroId,
+    ) -> Result<models::guild::Intro, models::guild::GetIntroError> {
+        self.wrapped_service.get_intro(guild_id, intro_id).await
     }
 
     async fn get_user(
@@ -214,5 +225,19 @@ where
         req: models::guild::AddIntroToGuildRequest,
     ) -> Result<IntroId, models::guild::AddIntroToGuildError> {
         self.wrapped_service.add_intro_to_guild(req).await
+    }
+
+    async fn edit_guild_intro(
+        &self,
+        req: UpdateGuildIntroRequest,
+    ) -> Result<(), UpdateGuildIntroError> {
+        self.wrapped_service.edit_guild_intro(req).await
+    }
+
+    async fn delete_intro(
+        &self,
+        req: DeleteGuildIntroRequest,
+    ) -> Result<(), UpdateGuildIntroError> {
+        self.wrapped_service.delete_intro(req).await
     }
 }

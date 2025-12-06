@@ -7,7 +7,8 @@ use crate::{
     domain::intro_tool::{
         models::guild::{
             self, ApiToken, AutheticateUserError, Channel, ChannelName, CreateUserRequest,
-            ExternalChannel, ExternalGuild, GetUserError, GuildId, IntroId, User,
+            DeleteGuildIntroRequest, ExternalChannel, ExternalGuild, GetUserError, GuildId,
+            IntroId, UpdateGuildIntroError, UpdateGuildIntroRequest, User,
         },
         ports::{
             ExternalUser, IntroToolRepository, IntroToolService, LocalAudioFetcher,
@@ -178,6 +179,14 @@ where
         self.repo.get_guild_intros(guild_id).await
     }
 
+    async fn get_intro(
+        &self,
+        guild_id: GuildId,
+        intro_id: IntroId,
+    ) -> Result<guild::Intro, guild::GetIntroError> {
+        self.repo.get_intro(guild_id, intro_id).await
+    }
+
     async fn get_user(
         &self,
         username: impl AsRef<str> + Send,
@@ -312,5 +321,26 @@ where
         self.repo
             .add_intro_to_guild(&req.name, req.guild_id, file_name)
             .await
+    }
+
+    async fn edit_guild_intro(
+        &self,
+        req: UpdateGuildIntroRequest,
+    ) -> Result<(), UpdateGuildIntroError> {
+        self.repo.edit_intro_name(req.intro_id, req.new_name).await
+    }
+
+    async fn delete_intro(
+        &self,
+        req: DeleteGuildIntroRequest,
+    ) -> Result<(), UpdateGuildIntroError> {
+        let intro = self.get_intro(req.guild_id, req.intro_id).await?;
+
+        self.repo.delete_intro(req.intro_id).await?;
+        self.local_audio_fetcher
+            .delete_local_audio(intro.filename())
+            .await?;
+
+        Ok(())
     }
 }

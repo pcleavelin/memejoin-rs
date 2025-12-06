@@ -359,6 +359,18 @@ pub struct UpdateUserGuildPermissionsRequest {
     pub permissions: HashMap<String, Permissions>,
 }
 
+#[derive(Clone)]
+pub struct UpdateGuildIntroRequest {
+    pub guild_id: GuildId,
+    pub intro_id: IntroId,
+    pub new_name: String,
+}
+
+pub struct DeleteGuildIntroRequest {
+    pub guild_id: GuildId,
+    pub intro_id: IntroId,
+}
+
 #[derive(Debug, Error)]
 pub enum CreateGuildError {
     #[error(transparent)]
@@ -465,6 +477,15 @@ pub enum AutheticateUserError<A: AuthService> {
 
     #[error("Error authenticating user")]
     ExternalError(A::Error),
+
+    #[error(transparent)]
+    Unknown(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum UpdateGuildIntroError {
+    #[error(transparent)]
+    GetIntroError(#[from] GetIntroError),
 
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),

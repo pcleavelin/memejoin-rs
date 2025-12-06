@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 
 use crate::domain::intro_tool::ports::LocalAudioFetcher;
 
@@ -28,6 +28,12 @@ impl LocalAudioFetcher for Ffmpeg {
         }
         std::fs::remove_file(&temp_path).context("failed to remove temp file")?;
 
-        Ok(dest_path)
+        Ok(format!("{name}.mp3"))
+    }
+
+    async fn delete_local_audio(&self, name: &str) -> Result<(), anyhow::Error> {
+        std::fs::remove_file(format!("./sounds/{name}"))?;
+
+        Ok(())
     }
 }

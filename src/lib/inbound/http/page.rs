@@ -16,7 +16,7 @@ use crate::{
         },
         ports::IntroToolService,
     },
-    htmx::{Build, HtmxBuilder, Tag},
+    htmx::{Build, HtmxBuilder, SwapMethod, Tag},
     inbound::{
         http::ApiState,
         response::{ApiError, ErrorAsRedirect, PageError},
@@ -76,16 +76,12 @@ pub async fn home<S: IntroToolService>(
                 b.attribute("class", "container")
                     .builder_text(Tag::Header2, "Choose a Guild")
                     .push_builder(guild_list(&state.origin, user_guilds.iter()))
-                    .push_builder(error_container("this is a test"))
             })
         };
 
         Ok(Html(
             page_header("MemeJoin - Home")
                 .builder(Tag::Div, |b| {
-                    //b.push_builder(guild_list)
-
-                    // TODO:
                     let mut b = b.push_builder(guild_list);
 
                     if !needs_setup && can_add_guild && !discord_guilds.is_empty() {
@@ -244,7 +240,7 @@ pub async fn guild_dashboard<S: IntroToolService>(
                                         |b| {
                                             b.attribute("id", "channel-intro-selector")
                                                 //.attribute("class", "grid")
-                                                .attribute("style", "display: flex; flex-direction: column; align-items: center; max-height: 50%; overflow: hidden;")
+                                                .attribute("style", "display: flex; flex-direction: column; align-items: center;")
                                                 .push_builder(channel_intro_selector(
                                                     &state.origin,
                                                     guild_id,
@@ -273,6 +269,7 @@ async fn moderator_dashboard<S: IntroToolService>(
 ) -> HtmxBuilder {
     let permissions_editor = permissions_editor(state, guild_id).await;
     let channel_editor = channel_editor(state, bot_token, guild_id).await;
+    let intro_editor = intro_editor(state, guild_id).await;
 
     let mut b = HtmxBuilder::new(Tag::Empty);
 
@@ -281,6 +278,11 @@ async fn moderator_dashboard<S: IntroToolService>(
     }
     if user_permissions.can(auth::Permission::AddChannel) {
         b = b.push_builder(match channel_editor {
+            Ok(b) | Err(b) => b,
+        });
+    }
+    if user_permissions.can(auth::Permission::DeleteSounds) {
+        b = b.push_builder(match intro_editor {
             Ok(b) | Err(b) => b,
         });
     }
@@ -412,6 +414,75 @@ async fn channel_editor<S: IntroToolService>(
                         b
                     })
                     .button(|b| b.attribute("type", "submit").text("Add Channel"))
+            }))
+    } else {
+        Ok(HtmxBuilder::new(Tag::Empty))
+    }
+}
+
+async fn intro_editor<S: IntroToolService>(
+    state: &ApiState<S>,
+    guild_id: GuildId,
+) -> Result<HtmxBuilder, HtmxBuilder> {
+    let intros = state
+        .intro_tool_service
+        .get_guild_intros(guild_id)
+        .await
+        .ok()
+        .unwrap_or_default();
+
+    if !intros.is_empty() {
+        Ok(HtmxBuilder::new(Tag::Details)
+            .builder_text(Tag::Summary, "Edit Intros")
+            .builder(Tag::Div, |b| {
+                let mut b = b
+                    .attribute("class", "container")
+                    .attribute("style", "max-height: 50%; overflow-y: scroll");
+
+                for intro in &intros {
+                    b = b.builder(Tag::Form, |b| {
+                        b.builder(Tag::FieldSet, |b| {
+                            b.attribute("id", "intro_edit_field")
+                                .attribute("class", "grid")
+                                .input(|b| {
+                                    b.attribute("name", "intro_name")
+                                        .attribute("value", intro.name())
+                                })
+                                .button(|b| {
+                                    b.attribute("type", "submit")
+                                        .attribute("class", "outline")
+                                        .text("Rename")
+                                        .hx_target("closest #intro_edit_field")
+                                        .hx_swap(SwapMethod::OuterHtml)
+                                        .hx_patch(&format!(
+                                            "{}/v2/guild/{}/intro/{}",
+                                            state.origin,
+                                            guild_id,
+                                            intro.id()
+                                        ))
+                                })
+                                .button(|b| {
+                                    b.attribute("type", "submit")
+                                        .attribute("class", "outline")
+                                        .attribute(
+                                            "style",
+                                            "--pico-color: red;--pico-border-color:red",
+                                        )
+                                        .text("Delete")
+                                        .hx_target("closest #intro_edit_field")
+                                        .hx_swap(SwapMethod::OuterHtml)
+                                        .hx_delete(&format!(
+                                            "{}/v2/guild/{}/intro/{}",
+                                            state.origin,
+                                            guild_id,
+                                            intro.id()
+                                        ))
+                                })
+                        })
+                    });
+                }
+
+                b
             }))
     } else {
         Ok(HtmxBuilder::new(Tag::Empty))

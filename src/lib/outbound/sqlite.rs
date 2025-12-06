@@ -13,7 +13,8 @@ use crate::{
             self, AddIntroToGuildError, AddIntroToGuildRequest, AddIntroToUserRequest, Channel,
             ChannelName, CreateChannelError, CreateChannelRequest, CreateGuildError,
             CreateGuildRequest, CreateUserError, CreateUserRequest, GetChannelError, GetGuildError,
-            GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId, User, UserName,
+            GetIntroError, GetUserError, Guild, GuildId, GuildRef, Intro, IntroId,
+            UpdateGuildIntroError, User, UserName,
         },
         ports::IntroToolRepository,
     },
@@ -237,6 +238,46 @@ impl IntroToolRepository for Sqlite {
         Ok(intros)
     }
 
+    async fn get_intro(
+        &self,
+        guild_id: GuildId,
+        intro_id: IntroId,
+    ) -> Result<Intro, GetIntroError> {
+        let conn = self.conn.lock().await;
+
+        let mut query = conn
+            .prepare(
+                "
+                SELECT
+                    Intro.id,
+                    Intro.name,
+                    Intro.filename
+                FROM Intro
+                WHERE
+                    Intro.id = :id AND Intro.guild_id = :guild_id
+                ",
+            )
+            .context("failed to prepare query")?;
+
+        let intro = query
+            .query_row(
+                &[
+                    (":id", &intro_id.to_string()),
+                    (":guild_id", &guild_id.to_string()),
+                ],
+                |row| {
+                    Ok(Intro::new(
+                        row.get::<_, i32>(0)?.into(),
+                        row.get(1)?,
+                        row.get(2)?,
+                    ))
+                },
+            )
+            .context("failed to fetch intro")?;
+
+        Ok(intro)
+    }
+
     async fn get_user(&self, username: impl AsRef<str>) -> Result<User, GetUserError> {
         let user = {
             let conn = self.conn.lock().await;
@@ -454,7 +495,7 @@ impl IntroToolRepository for Sqlite {
         conn.execute(
             "
             INSERT INTO
-                UserAppPermission (username, permissions) 
+                UserAppPermission (username, permissions)
             VALUES (?1, ?2)
             ON CONFLICT(username) DO UPDATE SET permissions = ?2
             ",
@@ -476,7 +517,7 @@ impl IntroToolRepository for Sqlite {
         conn.execute(
             "
             INSERT INTO
-                UserPermission (username, guild_id, permissions) 
+                UserPermission (username, guild_id, permissions)
             VALUES (?1, ?2, ?3)
             ON CONFLICT(username, guild_id) DO UPDATE SET permissions = ?3
             ",
@@ -655,5 +696,49 @@ impl IntroToolRepository for Sqlite {
             .context("failed to query row")?;
 
         Ok(intro_id)
+    }
+
+    async fn edit_intro_name(
+        &self,
+        intro_id: IntroId,
+        name: String,
+    ) -> Result<(), UpdateGuildIntroError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            UPDATE Intro
+            SET name = ?1
+            WHERE id = ?2
+            ",
+            [&name, &intro_id.to_string()],
+        )
+        .context("failed to update intro name")?;
+
+        Ok(())
+    }
+
+    async fn delete_intro(&self, intro_id: IntroId) -> Result<(), UpdateGuildIntroError> {
+        let conn = self.conn.lock().await;
+
+        conn.execute(
+            "
+            DELETE FROM UserIntro
+            WHERE intro_id = ?1
+            ",
+            [&intro_id.to_string()],
+        )
+        .context("failed to delete intro")?;
+
+        conn.execute(
+            "
+            DELETE FROM Intro
+            WHERE id = ?1
+            ",
+            [&intro_id.to_string()],
+        )
+        .context("failed to delete intro")?;
+
+        Ok(())
     }
 }

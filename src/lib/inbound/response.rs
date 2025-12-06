@@ -12,7 +12,7 @@ use crate::{
         models::guild::{
             AddIntroToGuildError, AddIntroToUserError, AddUserToGuildError, AutheticateUserError,
             CreateChannelError, CreateChannelRequest, CreateUserError, GetChannelError,
-            GetGuildError, GetIntroError, GetUserError,
+            GetGuildError, GetIntroError, GetUserError, UpdateGuildIntroError,
         },
         ports::AuthService,
     },
@@ -295,6 +295,19 @@ impl From<AddUserToGuildError> for ApiError {
     fn from(value: AddUserToGuildError) -> Self {
         match value {
             AddUserToGuildError::Unknown(error) => {
+                tracing::error!(err = ?error, "unknown error");
+
+                Self::internal(error.to_string())
+            }
+        }
+    }
+}
+
+impl From<UpdateGuildIntroError> for ApiError {
+    fn from(value: UpdateGuildIntroError) -> Self {
+        match value {
+            UpdateGuildIntroError::GetIntroError(error) => error.into(),
+            UpdateGuildIntroError::Unknown(error) => {
                 tracing::error!(err = ?error, "unknown error");
 
                 Self::internal(error.to_string())

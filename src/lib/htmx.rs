@@ -246,6 +246,14 @@ impl HtmxBuilder {
         self.attribute("hx-post", uri)
     }
 
+    pub fn hx_patch(self, uri: &str) -> Self {
+        self.attribute("hx-patch", uri)
+    }
+
+    pub fn hx_delete(self, uri: &str) -> Self {
+        self.attribute("hx-delete", uri)
+    }
+
     pub fn hx_swap(self, swap_method: SwapMethod) -> Self {
         self.attribute("hx-swap", swap_method.as_str())
     }

@@ -16,12 +16,12 @@ use crate::{
     domain::intro_tool::{
         models::guild::{
             AddIntroToGuildRequest, AddIntroToUserRequest, ChannelName, CreateChannelRequest,
-            CreateGuildRequest, GuildId, IntroRequestData, UpdateUserGuildPermissionsRequest, User,
-            UserName,
+            CreateGuildRequest, DeleteGuildIntroRequest, GuildId, IntroRequestData,
+            UpdateGuildIntroRequest, UpdateUserGuildPermissionsRequest, User, UserName,
         },
         ports::IntroToolService,
     },
-    htmx::Build,
+    htmx::{Build, HtmxBuilder, SwapMethod, Tag},
     inbound::{
         http::{ApiState, page},
         response::{ApiError, ErrorAsRedirect},
@@ -204,6 +204,31 @@ impl FromApi<Multipart, GuildId> for CreateChannelRequest {
         }
 
         Ok(Self { guild_id, channels })
+    }
+}
+
+impl FromApi<Form<EditGuildIntroForm>, (GuildId, i32)> for UpdateGuildIntroRequest {
+    async fn from_api(
+        value: Form<EditGuildIntroForm>,
+        (guild_id, intro_id): (GuildId, i32),
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            guild_id,
+            intro_id: intro_id.into(),
+            new_name: value.0.intro_name,
+        })
+    }
+}
+
+impl FromApi<Form<EditGuildIntroForm>, (GuildId, i32)> for DeleteGuildIntroRequest {
+    async fn from_api(
+        _value: Form<EditGuildIntroForm>,
+        (guild_id, intro_id): (GuildId, i32),
+    ) -> Result<Self, ApiError> {
+        Ok(Self {
+            guild_id,
+            intro_id: intro_id.into(),
+        })
     }
 }
 
@@ -452,4 +477,102 @@ pub(super) async fn guild_add_channel<S: IntroToolService>(
     headers.insert("HX-Refresh", HeaderValue::from_static("true"));
 
     Ok(headers)
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct EditGuildIntroForm {
+    pub intro_name: String,
+}
+
+pub(super) async fn edit_guild_intro<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path((guild_id, intro_id)): Path<(u64, i32)>,
+    user: User,
+    form: Form<EditGuildIntroForm>,
+) -> Result<Html<String>, ApiError> {
+    let Some((_, user_permissions)) = state
+        .intro_tool_service
+        .get_guild_users(guild_id.into())
+        .await?
+        .into_iter()
+        .find(|(guild_user, _)| guild_user.name() == user.name())
+    else {
+        return Err(ApiError::forbidden("invalid user"));
+    };
+
+    if !user_permissions.can(Permission::DeleteSounds) {
+        return Err(ApiError::forbidden("invalid permissions"));
+    }
+
+    let req: UpdateGuildIntroRequest = form.into_domain((guild_id.into(), intro_id)).await?;
+
+    state
+        .intro_tool_service
+        .edit_guild_intro(req.clone())
+        .await?;
+
+    let builder = HtmxBuilder::new(Tag::Empty).builder(Tag::FieldSet, |b| {
+        b.attribute("id", "intro_edit_field")
+            .attribute("class", "grid")
+            .input(|b| {
+                b.attribute("name", "intro_name")
+                    .attribute("value", &req.new_name)
+            })
+            .button(|b| {
+                b.attribute("type", "submit")
+                    .attribute("class", "outline")
+                    .text("Rename")
+                    .hx_target("closest #intro_edit_field")
+                    .hx_swap(SwapMethod::OuterHtml)
+                    .hx_patch(&format!(
+                        "{}/v2/guild/{}/intro/{}",
+                        state.origin, guild_id, intro_id,
+                    ))
+            })
+            .button(|b| {
+                b.attribute("type", "submit")
+                    .attribute("class", "outline")
+                    .attribute("style", "--pico-color: red;--pico-border-color:red")
+                    .text("Delete")
+                    .hx_target("closest #intro_edit_field")
+                    .hx_swap(SwapMethod::OuterHtml)
+                    .hx_delete(&format!(
+                        "{}/v2/guild/{}/intro/{}",
+                        state.origin, guild_id, intro_id
+                    ))
+            })
+    });
+
+    Ok(Html(builder.build()))
+}
+
+pub(super) async fn delete_guild_intro<S: IntroToolService>(
+    State(state): State<ApiState<S>>,
+    Path((guild_id, intro_id)): Path<(u64, i32)>,
+    user: User,
+    // TODO: remove this
+    form: Form<EditGuildIntroForm>,
+) -> Result<Html<String>, ApiError> {
+    let Some((_, user_permissions)) = state
+        .intro_tool_service
+        .get_guild_users(guild_id.into())
+        .await?
+        .into_iter()
+        .find(|(guild_user, _)| guild_user.name() == user.name())
+    else {
+        return Err(ApiError::forbidden("invalid user"));
+    };
+
+    if !user_permissions.can(Permission::DeleteSounds) {
+        return Err(ApiError::forbidden("invalid permissions"));
+    }
+
+    let req: DeleteGuildIntroRequest = form.into_domain((guild_id.into(), intro_id)).await?;
+
+    state.intro_tool_service.delete_intro(req).await?;
+
+    let builder = HtmxBuilder::new(Tag::Empty)
+        .label(|b| b.attribute("style", "justify-self: center").text("Deleted"));
+
+    Ok(Html(builder.build()))
 }
