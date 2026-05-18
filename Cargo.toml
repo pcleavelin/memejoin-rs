@@ -1,6 +1,6 @@
 [package]
 name = "memejoin-rs"
-version = "0.3.2-alpha"
+version = "0.3.3-alpha"
 edition = "2024"
 
 [[bin]]
@@ -12,6 +12,9 @@ name = "memejoin_rs"
 path = "src/lib/mod.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[patch.crates-io]
+audiopus_sys = { git = 'https://github.com/sevenc-nanashi/audiopus_sys', rev = '00e9d16' }
 
 [dependencies]
 anyhow = "1.0.100"
@@ -39,7 +42,7 @@ default-features = false
 features = ["client", "gateway", "rustls_backend", "model", "cache", "voice"]
 
 [dependencies.songbird]
-version = "0.5.0"
+version = "0.6.0"
 features = [ "builtin-queue", "driver" ]
 
 [dependencies.symphonia]
